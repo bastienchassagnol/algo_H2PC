@@ -14,19 +14,21 @@ import math
 import os
 import pyAgrum.lib.ipython as gnb
 from functools import partial
+import rpy2 as R
+
 
 
 class indepandance ():
     
     def __init__(self,df,ind_x,ind_y,conditions=[],**independance_args):
         
-       
+        
         #controle empty values and nature of dataframe
         if not isinstance(df,pd.core.frame.DataFrame):
            raise TypeError ("expected format is a dataframe")
         else:
             if df.isnull().values.any():
-                raise ValueError ("we can't perform tests on databases with missng values")
+                raise ValueError ("we can't perform tests on databases with missing values")
             else:
                 self.df=df                
         liste_variables=list(df.columns)
@@ -51,7 +53,7 @@ class indepandance ():
         
         
         #check nature of variables for independance puroposes, possible values are integer indexes or variable names of df
-        self.ind_x=self.check_value(ind_x,liste_variables)        
+        self.ind_x=self.check_value(ind_x,liste_variables)            
         self.ind_y=self.check_value(ind_y,liste_variables)         
         self.ind_z=list({self.check_value(indice,liste_variables) for indice in conditions})
         
@@ -311,7 +313,7 @@ if __name__ == "__main__":
     #print(new_independance.threshold_pvalue)
     #gnb.showBN(true_bn,8)  
     
-    #☻"classic","adjusted","permut","permut_adjusted","sp"
+    #"classic","adjusted","permut","permut_adjusted","sp"
     
     #print(indepandance(df,'xray','smoke',['either'],learner=None,calculation_method="log-likelihood",verbosity=True).testIndepFromChi2())
     #p_value, stat,chi2=indepandance(df,1,2,[3,4],calculation_method="pearson").realize_test()
@@ -319,24 +321,86 @@ if __name__ == "__main__":
     """
     
     
-    a = np.array(["foo", "bar", "foo", "foo", "bar", "bar"], dtype=object)
-    b = np.array(["one", "two", "one", "two", "one","two"], dtype=object)
-    c = np.array(["dull", "dull", "shiny", "dull", "shiny","shiny"], dtype=object) 
-    d=np.array(["hello","hello","hello","hello","hello","mince"])
+    x=np.array(["foo", "bar", "foo", "foo", "bar", "bar"])
+    y=np.array(["one", "two", "one", "two", "one","two"])
+    z1=np.array(["dull", "dull", "shiny", "dull", "shiny","shiny"])
+    z2=np.array(["hello","hello","hello","hello","hello","mince"])
     
     condition_df = pd.DataFrame(columns=['X','Y','Z1','Z2'])   
-    condition_df['X'],condition_df['Y'],condition_df['Z1'],condition_df['Z2']=a,b,c,d
-    condition_df.to_csv("test.csv",index=False)
-  
-    #true_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
-    #gum.generateCSV(true_bn,"sample_asia.csv",2000,False) 
+    condition_df['X'],condition_df['Y'],condition_df['Z1'],condition_df['Z2']=x,y,z1,z2
+    print(indepandance(condition_df,ind_x=0,ind_y=1,conditions=[2,3]).realize_test())
     
-    #condition_df=pd.read_csv("sample_asia.csv")
+   
+    from rpy2 import robjects
+    from rpy2.robjects import Formula, Environment
+    from rpy2.robjects.vectors import IntVector, FloatVector
+    from rpy2.robjects.lib import grid
+    from rpy2.robjects.packages import importr, data
+    from rpy2.rinterface import RRuntimeError
+    import warnings  
+    from rpy2.robjects import pandas2ri
+    
+    R.robjects.r('''
+        # create a function `f`
+        f <- function(r, verbose=FALSE) {
+            if (verbose) {
+                cat("I am calling f().\n")
+            }
+            2 * pi * r
+        }
+        # call the function `f` with argument value 3
+        f(3)
+        ''')
     
     
-    df=pd.read_csv("sample_asia.csv")
-    df_traitee=indepandance(df,ind_x=0,ind_y=1,conditions=[2,3],learner=gum.BNLearner("sample_asia.csv") ).realize_test()
-    print(df_traitee)
+    
+    R.robjects.r('''
+        # execute ci.test
+        require (bnlearn)
+        f <- function(x,y ,z=c(), df,test) {
+        resultat=ci.test(x=x,y=y,data=df,test=test)
+        #return (nb_nul)
+        }
+        ''')
+    r_f = robjects.r['f']
+    r_dataframe = pandas2ri.py2ri(condition_df)
+    r_f(x='X',y='Y',z=['Z1','Z2'],df=r_dataframe)
+    
+    
+    robjects.r('''
+        f <- function(r, verbose=FALSE) {
+            if (verbose) {
+                cat("I am calling f().\n")
+                print("hello")
+            }
+            2 * pi * r
+        }
+        f(3)
+        ''')    
+    r_f = robjects.r['f']
+    
+    r_f(3,verbose=True)
+   
+    
+    
+    R.rinterface.consolePrint(df)
+    
+    
+    
+    
+    
+    pandas2ri.activate()
+    
+    bnlearn = importr('bnlearn')
+    robjects.globalenv["conditionned_df"] = r_dataframe
+    print(r_dataframe)
+    bnlearn.ci_test(x='X',y='Y',z='Z',data=r_dataframe, test="x2",debug=True)
+    
+    
+    
+    
+    
+    
     
    
     
