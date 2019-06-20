@@ -474,9 +474,9 @@ class hpc():
 
 if __name__ == "__main__":  
     true_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
-    gnb.showBN(true_bn,8)   
     
-    gum.generateCSV(true_bn,"sample_asia.csv",20000,False)     
+    
+    df=gum.generateCSV(true_bn,"sample_asia.csv",20000,False)    
     df=pd.read_csv("sample_asia.csv")
     
     
@@ -484,6 +484,16 @@ if __name__ == "__main__":
    
     
     #hpc('VENTALV',learner,verbosity=False).couverture_markov()
+    
+l_indep=[("visit_to_Asia?","smoking?",['tuberculos_or_cancer?']),
+                                      ("visit_to_Asia?","smoking?",[]),
+                                      ("dyspnoea?","smoking?",[]),
+                                      ("dyspnoea?","smoking?",["lung_cancer?","bronchitis?"]),
+                                      ("tuberculosis?","bronchitis?",[]),
+                                      ("tuberculosis?","bronchitis?",["dyspnoea?"])]
+    
+
+
     
    
     

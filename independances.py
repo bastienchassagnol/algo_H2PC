@@ -14,7 +14,7 @@ import math
 import os
 import pyAgrum.lib.ipython as gnb
 from functools import partial
-import rpy2 as R
+
 
 
 
@@ -100,6 +100,13 @@ class indepandance ():
                              
         if "sp" in self.dof_adjustment:
             self.permutation_number=independance_args.get("permutation_number",150)
+            
+        self.R_test=independance_args.get('R_test',False)  
+        if isinstance(self.R_test,bool):
+            if self.calculation_method not in ["pearson","log-likelihood"]:
+                raise ValueError("Only possible tests computed with R tests are pearson and log likelihood tests")
+        else:
+            raise TypeError("Expected format for R_test is boolean")           
                 
         self.levels_x=0
         self.levels_y=0
@@ -122,6 +129,7 @@ class indepandance ():
                 else:
                     return liste_variables.index(indice)
             else:
+                print("non exisintg index is ", indice)
                 raise ValueError ("You try to condition on a not existing value")            
         else:
             raise TypeError("Format expected for condition test is either a string or the integer index of the variable")
@@ -254,6 +262,34 @@ class indepandance ():
                 return (chi2_0,  estimated_p_value,None)   
 
         return (chi2_0,np.count_nonzero(chi2_0<chi2_permut_vector)/self.permutation_number,None)
+    
+    def realize_R_test(self,type_test):
+      condition_df=self.column_treatment()           
+      #several useful imports to make type transition between Python and R
+      from rpy2 import robjects      
+      robjects.r('''
+        # execute ci.test
+        require (bnlearn)
+        f <- function(x,y ,z=c(), df,test) {
+        
+        #convert dataframe as factor df
+        for(i in 1:ncol(df)){
+        df[,i] <- as.factor(df[,i])
+        }
+        #two types of tests, according whether z is present or not    
+        if (is.null(z)) { resultat=ci.test(x=x,y=y,data=df[,c(1,2)],test=test) }
+        else {resultat=ci.test(x=x,y=y,z=z,data=df,test=test) }                
+        return (c(as.numeric(resultat$statistic),as.numeric(resultat$p.value)))                
+        }
+        ''')
+      ci_test = robjects.r['f']
+      #condtionnal test
+      
+      if self.ind_z:
+          return ci_test('X','Y','Z',df=condition_df, test=type_test)
+      #classic independance test
+      else:          
+          return ci_test(x='X',y='Y',df=condition_df, test=type_test)
         
         
     def semi_parametric(self,condition_df):
@@ -267,6 +303,19 @@ class indepandance ():
             retour=type_test[self.calculation_method](self.ind_x,self.ind_y,self.ind_z)
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))
+        elif self.R_test:
+            #dico to convert Python parameters to R parameters
+            python_test=self.dof_adjustment+"_"+self.calculation_method
+            dico_conversion_type={"classic_pearson": "x2","adjusted_pearson":"x2-adf","permut_pearson":"mc-x2","permut_pearson":"mc-x2","sp_pearson":"sp-x2",\
+                                  "classic_log-likelihood": "mi","adjusted_log-likelihood":"mi-adf","permut_log-likelihood":"mc-mi","permut_log-likelihood":"mc-mi","sp_log-likelihood":"sp-mi"}
+            
+            #two several types of tests, according it's conditionnal independance or not
+            
+            
+            retour=self.realize_R_test(dico_conversion_type[python_test])
+            if self.verbosity:
+                print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))              
+            
         else:
             type_test={ "classic":self.classic_test,"adjusted":self.adjusted_test,"permut":self.permutation,"permut_adjusted":self.heuristic_permutation,"sp":self.semi_parametric}
             condition_df=self.column_treatment()            
@@ -277,6 +326,11 @@ class indepandance ():
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, pvalue: {} and degrees of freedom: {}".format(*retour))
         return retour 
+    
+    
+    
+    
+    
     
     def testIndepFromChi2(self,p_value=None):
         """
@@ -318,7 +372,7 @@ if __name__ == "__main__":
     #print(indepandance(df,'xray','smoke',['either'],learner=None,calculation_method="log-likelihood",verbosity=True).testIndepFromChi2())
     #p_value, stat,chi2=indepandance(df,1,2,[3,4],calculation_method="pearson").realize_test()
     #learner.G2('xray','smoke',['either'])
-    """
+ 
     
     
     x=np.array(["foo", "bar", "foo", "foo", "bar", "bar"])
@@ -326,77 +380,43 @@ if __name__ == "__main__":
     z1=np.array(["dull", "dull", "shiny", "dull", "shiny","shiny"])
     z2=np.array(["hello","hello","hello","hello","hello","mince"])
     
-    condition_df = pd.DataFrame(columns=['X','Y','Z1','Z2'])   
-    condition_df['X'],condition_df['Y'],condition_df['Z1'],condition_df['Z2']=x,y,z1,z2
-    print(indepandance(condition_df,ind_x=0,ind_y=1,conditions=[2,3]).realize_test())
+    condition_df = pd.DataFrame(columns=['X','Y','Z'])   
+    condition_df['X'],condition_df['Y'],condition_df['Z']=x,y,z1
     
-   
-    from rpy2 import robjects
-    from rpy2.robjects import Formula, Environment
-    from rpy2.robjects.vectors import IntVector, FloatVector
-    from rpy2.robjects.lib import grid
-    from rpy2.robjects.packages import importr, data
-    from rpy2.rinterface import RRuntimeError
-    import warnings  
-    from rpy2.robjects import pandas2ri
+    tuple_value=('X','Y','Z')
+    print()
     
-    R.robjects.r('''
-        # create a function `f`
-        f <- function(r, verbose=FALSE) {
-            if (verbose) {
-                cat("I am calling f().\n")
-            }
-            2 * pi * r
-        }
-        # call the function `f` with argument value 3
-        f(3)
-        ''')
+    p_value=indepandance(condition_df,'X','Y',R_test=True).realize_test()
+    """
     
     
+    bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
+    lindep=[("asia","smoke",['lung']),    ("asia","smoke",[]),
+                                          ("dysp","smoke",[]),
+                                          ("dysp","smoke",["lung","bronc"]),
+                                          ("tub","bronc",[]),
+                                          ("tub","bronc",["dysp"])]
+    def compute_independance_tests(bn,size,lindep,**dico_critere):
+        """
+        Using database of size $size$ from the bn $bn$, 
+        computing the p-value for a list $lindep$ of conditional independence tests, using $test$ type.
+        """
+        pvalue_vector=[]
+        gum.generateCSV(bn,os.path.join("databases","sample_score.csv"),size,False)
+        #learner=gum.BNLearner(os.path.join("databases","sample_score.csv"))
+        df=pd.read_csv(os.path.join("databases","sample_score.csv"))
+        for tuple_condition in lindep:            
+            pvalue_vector.append(indepandance(df,*tuple_condition,**dico_critere).realize_test()[1])
+        return pvalue_vector
     
-    R.robjects.r('''
-        # execute ci.test
-        require (bnlearn)
-        f <- function(x,y ,z=c(), df,test) {
-        resultat=ci.test(x=x,y=y,data=df,test=test)
-        #return (nb_nul)
-        }
-        ''')
-    r_f = robjects.r['f']
-    r_dataframe = pandas2ri.py2ri(condition_df)
-    r_f(x='X',y='Y',z=['Z1','Z2'],df=r_dataframe)
-    
-    
-    robjects.r('''
-        f <- function(r, verbose=FALSE) {
-            if (verbose) {
-                cat("I am calling f().\n")
-                print("hello")
-            }
-            2 * pi * r
-        }
-        f(3)
-        ''')    
-    r_f = robjects.r['f']
-    
-    r_f(3,verbose=True)
-   
+    compute_independance_tests(bn,2000,lindep)
+        
+    sizes=[2000,5000,10000,20000,50000,100000,200000]
+    pvalues1,pvalues2,pvalues3,pvalues4,pvalues5,pvalues6=zip(*[compute_independance_tests(bn,siz,lindep)
+                                          for siz in sizes])
     
     
-    R.rinterface.consolePrint(df)
-    
-    
-    
-    
-    
-    pandas2ri.activate()
-    
-    bnlearn = importr('bnlearn')
-    robjects.globalenv["conditionned_df"] = r_dataframe
-    print(r_dataframe)
-    bnlearn.ci_test(x='X',y='Y',z='Z',data=r_dataframe, test="x2",debug=True)
-    
-    
+    print(pvalues6)
     
     
     
