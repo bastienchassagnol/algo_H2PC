@@ -473,24 +473,35 @@ class hpc():
 
 
 if __name__ == "__main__":  
-    true_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
-    
-    
-    df=gum.generateCSV(true_bn,"sample_asia.csv",20000,False)    
+    import pyAgrum.lib.bn_vs_bn as comp
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))      
+    #gum.generateCSV(asia_bn,"sample_asia.csv",200000,False)    
     df=pd.read_csv("sample_asia.csv")
+    gnb.showBN(asia_bn)
     
     
-    print(hpc('tub',df,threshold_pvalue=0.05,verbosity=False).couverture_markov())
-   
+    #print(hpc('either',df,threshold_pvalue=0.05,R_test=True).couverture_markov())
     
+    true_arcs=asia_bn.arcs()
+    
+    learner_greedy=gum.BNLearner("sample_asia.csv")
+    learner_greedy.useGreedyHillClimbing()
+    BNgreedy=learner_greedy.learnBN()
+    gnb.showBN(BNgreedy)
+    
+    
+    learner_H2PC=gum.BNLearner("sample_asia.csv")
+    for arc in true_arcs:
+        learner_H2PC.addPossibleEdge(*arc)
+    learner_H2PC.useLocalSearchWithTabuList(100,20)
+    BN_H2PC=learner_H2PC.learnBN()
+    gnb.showBN(BN_H2PC)
     #hpc('VENTALV',learner,verbosity=False).couverture_markov()
     
-l_indep=[("visit_to_Asia?","smoking?",['tuberculos_or_cancer?']),
-                                      ("visit_to_Asia?","smoking?",[]),
-                                      ("dyspnoea?","smoking?",[]),
-                                      ("dyspnoea?","smoking?",["lung_cancer?","bronchitis?"]),
-                                      ("tuberculosis?","bronchitis?",[]),
-                                      ("tuberculosis?","bronchitis?",["dyspnoea?"])]
+    print(comp.GraphicalBNComparator(BNgreedy,asia_bn).scores())
+    print(comp.GraphicalBNComparator(BN_H2PC,asia_bn).scores())
+    
+
     
 
 

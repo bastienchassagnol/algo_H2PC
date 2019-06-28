@@ -14,6 +14,7 @@ import math
 import os
 import pyAgrum.lib.ipython as gnb
 from functools import partial
+import matplotlib.pyplot as plt
 
 
 
@@ -266,8 +267,13 @@ class indepandance ():
     def realize_R_test(self,type_test):
       condition_df=self.column_treatment()           
       #several useful imports to make type transition between Python and R
-      from rpy2 import robjects      
-      robjects.r('''
+       
+      #pandas2ri uses a library required to convert Python dataframe to R dataframes
+      from rpy2.robjects import r, pandas2ri
+      pandas2ri.activate()
+      r_dataframe=pandas2ri.py2ri(condition_df)
+      
+      r('''
         # execute ci.test
         require (bnlearn)
         f <- function(x,y ,z=c(), df,test) {
@@ -282,14 +288,14 @@ class indepandance ():
         return (c(as.numeric(resultat$statistic),as.numeric(resultat$p.value)))                
         }
         ''')
-      ci_test = robjects.r['f']
+      ci_test = r['f']
       #condtionnal test
       
       if self.ind_z:
-          return ci_test('X','Y','Z',df=condition_df, test=type_test)
+          return ci_test('X','Y','Z',df=r_dataframe, test=type_test)
       #classic independance test
       else:          
-          return ci_test(x='X',y='Y',df=condition_df, test=type_test)
+          return ci_test(x='X',y='Y',df=r_dataframe, test=type_test)
         
         
     def semi_parametric(self,condition_df):
@@ -350,73 +356,128 @@ class indepandance ():
         
         
         
+def compute_independance_tests(bn,sizes,test,nb_test=20,**dico_independance):
+    """
+    Using $nb_test$ database of size $size$ from the bn $bn$, 
+    computing the p-value for a list $lindep$ of conditional independence tests, using $test$ type.
+    """
+    #pvalue vector stores pvalues for a given size for several conditions
+    pvalue_vector=[]
+    
+    #pvalue amplitude stores the shift between max and min pvalue measured
+    pvalue_min_error,p_value_max_error=[],[]
+    
+    for size in sizes:  
+        print("la taille actuelle est de ", size)         
+        pvalue_temp=np.empty(nb_test)
+        for indice in range(nb_test):
+            gum.generateCSV(bn,os.path.join("databases","sample_score.csv"),size,False)
+            df=pd.read_csv(os.path.join("databases","sample_score.csv"))
+            pvalue_temp[indice]=indepandance(df,*test,**dico_independance).realize_test()[1]
+        print("le vecteur temp est ", pvalue_temp)
+        pvalue_vector.append(np.mean(pvalue_temp))
+        pvalue_min_error.append((np.mean(pvalue_temp)-np.min(pvalue_temp)))
+        p_value_max_error.append((np.max(pvalue_temp)-np.mean(pvalue_temp)))
+    return pvalue_vector,np.array([pvalue_min_error,p_value_max_error])
 
+def plot_independance_tests(bn,sizes,lindep,nb_test=20,**dico_independance):
+
+    fig = plt.figure()
+    for test in lindep:
+        print("we study {} test".format(format_test(test)))
+        pvalues,pvalues_err=compute_independance_tests(bn,sizes,test,nb_test,**dico_independance)
+        plt.errorbar(sizes, pvalues, yerr=pvalues_err, uplims=True, lolims=True, label=format_test(test))
+    #at the end of computation, delete temporay file created
+    os.remove(os.path.join("databases","sample_score.csv"))
+    plt.tick_params(rotation=90)
+    plt.xlabel ("data size")
+    plt.ylabel ("pValue")
+    plt.legend(bbox_to_anchor=(0.15, 0.88, 0.7, .102), loc=3,ncol=3, mode="expand", borderaxespad=0.)
+    plt.title("{} test using {} technique".format(dico_independance.get("calculation_method","pearson"), \
+                                                     dico_independance.get("dof_adjustment","classic")))
+    fig.tight_layout()
+    plt.savefig("resultat_independance_R.png")
+
+def format_test(test):
+    if test[2]:
+        return ("{} indep {} given {}.".format(*test))
+    else:
+        return ("{} indep {}.".format(*test[0:2]))
+
+
+import time
+
+def controler_temps(nb_secs):
+    """Contrôle le temps mis par une fonction pour s'exécuter.
+    Si le temps d'exécution est supérieur à nb_secs, on affiche une alerte"""
+    
+    def decorateur(fonction_a_executer):
+        """Notre décorateur. C'est lui qui est appelé directement LORS
+        DE LA DEFINITION de notre fonction (fonction_a_executer)"""
+        
+        def fonction_modifiee():
+            """Fonction renvoyée par notre décorateur. Elle se charge
+            de calculer le temps mis par la fonction à s'exécuter"""
+            
+            tps_avant = time.time() # Avant d'exécuter la fonction
+            valeur_renvoyee = fonction_a_executer() # On exécute la fonction
+            tps_apres = time.time()
+            tps_execution = tps_apres - tps_avant
+            print("le temps d'ex est de ", tps_execution)
+            return valeur_renvoyee
+        return fonction_modifiee
+    return decorateur
 
    
 if __name__ == "__main__":     
-    """      
-    true_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
     
-    
-    
-    learner=gum.BNLearner("sample_asia.csv") 
-    df=pd.read_csv("sample_asia.csv")
-    independance_args={'threshold_pvalue':0.05,'verbosity':False}
-    
-  
-    #print(new_independance.threshold_pvalue)
-    #gnb.showBN(true_bn,8)  
-    
-    #"classic","adjusted","permut","permut_adjusted","sp"
-    
-    #print(indepandance(df,'xray','smoke',['either'],learner=None,calculation_method="log-likelihood",verbosity=True).testIndepFromChi2())
-    #p_value, stat,chi2=indepandance(df,1,2,[3,4],calculation_method="pearson").realize_test()
-    #learner.G2('xray','smoke',['either'])
- 
-    
-    
-    x=np.array(["foo", "bar", "foo", "foo", "bar", "bar"])
-    y=np.array(["one", "two", "one", "two", "one","two"])
-    z1=np.array(["dull", "dull", "shiny", "dull", "shiny","shiny"])
-    z2=np.array(["hello","hello","hello","hello","hello","mince"])
-    
-    condition_df = pd.DataFrame(columns=['X','Y','Z'])   
-    condition_df['X'],condition_df['Y'],condition_df['Z']=x,y,z1
-    
-    tuple_value=('X','Y','Z')
-    print()
-    
-    p_value=indepandance(condition_df,'X','Y',R_test=True).realize_test()
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))   
     """
-    
-    
-    bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
     lindep=[("asia","smoke",['lung']),    ("asia","smoke",[]),
                                           ("dysp","smoke",[]),
                                           ("dysp","smoke",["lung","bronc"]),
                                           ("tub","bronc",[]),
                                           ("tub","bronc",["dysp"])]
-    def compute_independance_tests(bn,size,lindep,**dico_critere):
-        """
-        Using database of size $size$ from the bn $bn$, 
-        computing the p-value for a list $lindep$ of conditional independence tests, using $test$ type.
-        """
-        pvalue_vector=[]
-        gum.generateCSV(bn,os.path.join("databases","sample_score.csv"),size,False)
-        #learner=gum.BNLearner(os.path.join("databases","sample_score.csv"))
-        df=pd.read_csv(os.path.join("databases","sample_score.csv"))
-        for tuple_condition in lindep:            
-            pvalue_vector.append(indepandance(df,*tuple_condition,**dico_critere).realize_test()[1])
-        return pvalue_vector
+    """
+    lindep=[("asia","smoke",['lung'])]
+    sizes=[20000,50000,100000,200000]
+    #plot_independance_tests(asia_bn,sizes,lindep,nb_test=20,R_test=True)
+    #gnb.showBN(asia_bn,size="20")
     
-    compute_independance_tests(bn,2000,lindep)
-        
-    sizes=[2000,5000,10000,20000,50000,100000,200000]
-    pvalues1,pvalues2,pvalues3,pvalues4,pvalues5,pvalues6=zip(*[compute_independance_tests(bn,siz,lindep)
-                                          for siz in sizes])
+    """
+    ie=gum.LazyPropagation(asia_bn)
+    ie.addJointTarget({"asia"})
+    ie.makeInference()
+    ie.jointPosterior({"asia"}).toarray()
+    """
+    
+    df_test = pd.DataFrame({'X': ["foo", "bar", "foo", "foo", "bar", "bar"], 'Y': ["one", "two", "one", "two", "one","two"],'Z1': ["dull", "shiny", "shiny", "dull", "shiny","shiny"],'Z2': ["hello","hello","hello","hello","mince","mince"]})
+    df_test.to_csv("df_test.csv")                 
+    #gum.generateCSV(asia_bn,"sample_asia.csv",100,False)
+    learner=gum.BNLearner("df_test.csv")
+    #avec py agrum
+    print(indepandance(df_test,"X","Y",["Z1","Z2"],learner=learner).realize_test())
+    #avec R
+    print(indepandance(df_test,"X","Y",["Z1","Z2"],R_test=True).realize_test())
+    #avec own program
+    print(indepandance(df_test,"X","Y",["Z1","Z2"]).realize_test())
+    
+    #avec pre traitement df
+    df_traited=indepandance(df_test,"X","Y",["Z1","Z2"]).column_treatment()
+    df_traited.to_csv("df_traited.csv")
+    learner=gum.BNLearner("df_traited.csv")
+    #avec py agrum
+    print(indepandance(df_traited,"X","Y",["Z"],learner=learner).realize_test())
     
     
-    print(pvalues6)
+    
+   
+
+    
+    
+    
+    
+    
     
     
     
