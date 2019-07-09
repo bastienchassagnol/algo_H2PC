@@ -4,18 +4,20 @@ Created on Tue May 28 14:18:08 2019
 
 @author: Bastien
 """
+
+
+
 import pandas as pd
 import pyAgrum as gum
 from sklearn import preprocessing
+import numbers
+import os
 import numpy as np
 from scipy import stats 
-import numbers
 import math
-import os
-import pyAgrum.lib.ipython as gnb
-from functools import partial
 import matplotlib.pyplot as plt
-
+import pyAgrum.lib.ipython as gnb
+import random
 
 
 
@@ -23,18 +25,10 @@ class indepandance ():
     
     def __init__(self,df,ind_x,ind_y,conditions=[],**independance_args):
         
-        
-        #controle empty values and nature of dataframe
-        if not isinstance(df,pd.core.frame.DataFrame):
-           raise TypeError ("expected format is a dataframe")
-        else:
-            if df.isnull().values.any():
-                raise ValueError ("we can't perform tests on databases with missing values")
-            else:
-                self.df=df                
-        liste_variables=list(df.columns)
-        
-        
+        self.usePyAgrum=independance_args.get('usePyAgrum',False)
+        if not isinstance(self.usePyAgrum,bool):
+            raise TypeError("Only possible values for usePyAgrum are boolean")           
+            
         self.dof_adjustment=independance_args.get('dof_adjustment',"classic")
         if self.dof_adjustment not in ["classic","adjusted","permut","permut_adjusted","sp"]:
             raise ValueError("Possible tests are included in these tests: {}".format(["classic","adjusted","permut","permut_adjusted","semi_parametric"]))
@@ -42,41 +36,18 @@ class indepandance ():
         self.calculation_method=independance_args.get('calculation_method',"pearson")
         if self.calculation_method not in ["pearson","log-likelihood","freeman-tukey","mod-log-likelihood","cressie-read"]:
             raise ValueError("Possible compuation statistics are included in these tests: {}".format(["pearson","log-likelihood","freeman-tukey","mod-log-likelihood","cressie-read"]))
-                   
-        
-        self.learner=independance_args.get('learner')        
-        #check if we use Pyagrum methods or not for independances   
-        if not isinstance(self.learner,gum.pyAgrum.BNLearner) and self.learner is not None:
-            raise TypeError("Only possible values for learner are pyAgrum.BNLearner or None") 
-        
-        if isinstance(self.learner,gum.pyAgrum.BNLearner) and self.calculation_method not in ["pearson","log-likelihood"]:               
-            raise ValueError("Only valuable tests are G2 and pearson with Pyagrum libraries")  
-        
-        
-        #check nature of variables for independance puroposes, possible values are integer indexes or variable names of df
-        self.ind_x=self.check_value(ind_x,liste_variables)            
-        self.ind_y=self.check_value(ind_y,liste_variables)         
-        self.ind_z=list({self.check_value(indice,liste_variables) for indice in conditions})
-        
-        
-        
-        #check that variables to check are not in the condtionning set
-        if self.ind_x in self.ind_z or self.ind_y  in self.ind_z:
             
-            raise ValueError("duplication of either x or y in the condition set") 
             
+        if self.usePyAgrum:
+            self.learner=independance_args.get('learner')        
+            #check if we use Pyagrum methods or not for independances   
+            if isinstance(self.learner,gum.pyAgrum.BNLearner) and self.calculation_method not in ["pearson","log-likelihood"]:               
+                raise ValueError("Only valuable tests are G2 and pearson with Pyagrum libraries")  
+                
         self.verbosity=independance_args.get('verbosity',False)    
         if not isinstance (self.verbosity, bool):
-            raise TypeError("Expected format for verbosity is boolean")
-        
-        self.dof_adjustment=independance_args.get('dof_adjustment',"classic")
-        if self.dof_adjustment not in ["classic","adjusted","permut","permut_adjusted","sp"]:
-            raise ValueError("Possible tests are included in these tests: {}".format(["classic","adjusted","permut","permut_adjusted","semi_parametric"]))
-        
-        self.calculation_method=independance_args.get('calculation_method',"pearson")
-        if self.calculation_method not in ["pearson","log-likelihood","freeman-tukey","mod-log-likelihood","cressie-read"]:
-            raise ValueError("Possible compuation statistics are included in these tests: {}".format(["pearson","log-likelihood","freeman-tukey","mod-log-likelihood","cressie-read"]))
-            
+            raise TypeError("Expected format for verbosity is boolean")      
+       
         
         self.power_rule=independance_args.get('power_rule')
         if self.power_rule:
@@ -100,82 +71,72 @@ class indepandance ():
                 raise ValueError("Probability of normal confidence must be included in range [0,1]")   
                              
         if "sp" in self.dof_adjustment:
-            self.permutation_number=independance_args.get("permutation_number",150)
-            
+            self.permutation_number=independance_args.get("permutation_number",150)    
+        
         self.R_test=independance_args.get('R_test',False)  
         if isinstance(self.R_test,bool):
             if self.calculation_method not in ["pearson","log-likelihood"]:
                 raise ValueError("Only possible tests computed with R tests are pearson and log likelihood tests")
         else:
-            raise TypeError("Expected format for R_test is boolean")           
-                
-        self.levels_x=0
-        self.levels_y=0
-        self.levels_z=0
+            raise TypeError("Expected format for R_test is boolean")   
+        
+        
+        liste_variables=list(df.columns) 
+        #check nature of variables for independance puroposes, possible values are integer indexes or variable names of df
+        
+        self.ind_x=self.check_value(ind_x,liste_variables)            
+        self.ind_y=self.check_value(ind_y,liste_variables)         
+        self.ind_z=list({self.check_value(indice,liste_variables) for indice in conditions})
+        
+        #check that variables to check are not in the condtionning set
+        if self.ind_x in self.ind_z or self.ind_y  in self.ind_z:            
+            raise ValueError("duplication of either x or y in the condition set") 
+        
+        #controle empty values and nature of dataframe
+        #then, we only select columns of interest
+        if not isinstance(df,pd.core.frame.DataFrame):
+           raise TypeError ("expected format is a dataframe")
+        else:
+            self.df=df[[self.ind_x,self.ind_y,*self.ind_z]]    
+        
+        
+        if not self.usePyAgrum and not self.R_test:
+            self.levels=independance_args.get('levels',self.df.nunique())
             
+        self.bn=independance_args.get('bn') 
+        if self.bn:
+            if not isinstance (self.bn,gum.pyAgrum.BayesNet):      
+                raise ValueError("Bayesian network must be of that type : pyAgrum.pyAgrum.BayesNet or None")  
+      
     
     def check_value(self,indice,liste_variables):
         if isinstance(indice,int):
             if  indice<len(self.df.columns) and indice>=0:
-                if self.learner:
-                    return self.learner.nameFromId(indice)
-                else:
-                    return indice
+                    return liste_variables[indice]
             else:
                 raise ValueError("index is supposed included between 0 and number of variables")
         elif isinstance(indice,str):
             if indice in liste_variables:
-                if self.learner:
-                    return indice
-                else:
-                    return liste_variables.index(indice)
+                return indice                
             else:
-                print("non exisintg index is ", indice)
-                raise ValueError ("You try to condition on a not existing value")            
+                raise ValueError ("You try to condition on a not existing value: {}".format(indice))            
         else:
             raise TypeError("Format expected for condition test is either a string or the integer index of the variable")
     
-    def column_treatment(self):
-        column_x=self.df.iloc[:,self.ind_x].values
-        column_y=self.df.iloc[:,self.ind_y].values
+   
         
-        #convert each factor as a class of integers
-        #role of compression
-        le = preprocessing.LabelEncoder()
-        column_x=le.fit_transform(column_x)
-        column_y=le.fit_transform(column_y)
-        
-        #create a dataframe combining the 3 columns
-        if self.ind_z:
-            column_z=np.array(self.df.iloc[:,self.ind_z[0]].values,dtype=str)
-            self.levels_z=len(np.unique(column_z))
-            
-            for indice in self.ind_z[1:]:               
-                column_z=np.array([x1 + x2  for x1,x2 in zip(column_z,np.array(self.df.iloc[:,indice].values,dtype=str))])
-                self.levels_z+=len(self.df.iloc[:,indice].unique())
-            condition_df = {'X':column_x,'Y':column_y,'Z':le.fit_transform(column_z)}
-            condition_df=pd.DataFrame.from_dict(condition_df)
-            #compute nlevels of x, y and z
-            self.levels_x,self.levels_y=len(np.unique(column_x)),len(np.unique(column_y))
-        else:
-            condition_df = {'X':column_x,'Y':column_y,'Z':np.zeros(len(column_y),dtype='int')}
-            condition_df=pd.DataFrame.from_dict(condition_df)
-            #create an empty column of the same factor of Z, in order to reduce size of code, and use a general method
-            self.levels_x,self.levels_y,self.levels_z=len(np.unique(column_x)),len(np.unique(column_y)),1
-        
-        return condition_df
+      
         
     def apply_heuristic_one(self):        
         return len(self.df.index) < (self.power_rule * self.levels_x * self.levels_y * self.levels_z)   
         
     def compute_statistic(self,group,adjust_degree=False,total_df=None,permut=False): 
-        #if permutation is true, we first shuffle values before creating contingency table        
+        
         if permut:
             group=group.copy()
-            group['Y']=np.random.permutation(group['Y'].values)    
-        effectif_observe_by_z=np.array(pd.crosstab(group['X'],group['Y']))    
-        chi2_stat_by_z, p, dof, theoric_effectif =stats.chi2_contingency(effectif_observe_by_z, correction=False, lambda_=self.calculation_method)
-        
+            group[self.ind_y]=np.random.permutation(group[self.ind_y].values)    
+        effectif_observe_by_z=np.array(pd.crosstab(group[self.ind_x],group[self.ind_y])) 
+        chi2_stat_by_z =stats.chi2_contingency(effectif_observe_by_z, correction=False, lambda_=self.calculation_method)[0]
                 
         #computing in the same time degrees of freedom adjustement
         if adjust_degree:
@@ -187,41 +148,52 @@ class indepandance ():
             #in our case, equivalent tou count the number of zeros in the matrix
                         
             return chi2_stat_by_z,total_df   
-        
-        return chi2_stat_by_z   
+        return chi2_stat_by_z  
     
+    def size_group(self,group):
+        return (len(group))
         
     
-    def classic_test(self,condition_df):      
-        #we sum statistic for each group Z        
-        statistic=condition_df.groupby(['Z']).agg(self.compute_statistic)['X'].sum()
+    def classic_test(self):      
+        #we sum statistic for each group Z 
+        statistic=0
+        if self.ind_z:
+            grouped=self.df.groupby(self.ind_z, as_index=False)
+            for name, group in grouped:
+                 statistic+=self.compute_statistic(group)
+        else:
+            statistic=self.compute_statistic(self.df)
         dof=(self.levels_x-1)*(self.levels_y-1)*self.levels_z
         p_value=1-stats.chi2.cdf(statistic,dof)        
-        return (statistic,p_value,dof)     
-       
+        return (statistic,p_value,dof)  
         
     def adjusted_test(self,condition_df): 
-        groups,adjusted_df,chi2=condition_df.groupby(['Z']),(self.levels_x-1)*(self.levels_y-1)*self.levels_z,0       
-        for  name,group in groups:            
-            chi_temp,adjusted_df=self.compute_statistic(group,adjust_degree=True,total_df=adjusted_df)
-            chi2+=chi_temp            
-        
+        if self.ind_z:
+            groups,adjusted_df,chi2=condition_df.groupby([self.ind_z]),(self.levels_x-1)*(self.levels_y-1)*self.levels_z,0       
+            for  name,group in groups:            
+                chi_temp,adjusted_df=self.compute_statistic(group,adjust_degree=True,total_df=adjusted_df)
+                chi2+=chi_temp
+        else:
+            adjusted_df=(self.levels_x-1)*(self.levels_y-1)*self.levels_z
+            chi2=self.compute_statistic(group,adjust_degree=True,total_df=adjusted_df)
         p_value=1-stats.chi2.cdf(chi2,adjusted_df)
         return (chi2,p_value,adjusted_df)
          
         
     def permutation(self,condition_df,semi_parametric_option=False):        
         #first compute chi2 statistic in the original database
-        chi2_original=self.classic_test(condition_df)[0]
+        chi2_original=self.classic_test()[0]
         #store stats for each permuation
         chi2_permut_vector=np.empty(self.permutation_number)
         #conditional permutation test
         
-        for permutation in range (self.permutation_number):                          
-            chi2_permut=0            
-            for  name,group in condition_df.groupby(['Z']):  
-               chi2_permut+=self.compute_statistic(group,permut=True)
-            
+        for permutation in range (self.permutation_number):    
+            if self.ind_z:                                      
+                chi2_permut=0          
+                for  name,group in condition_df.groupby([self.ind_z]):  
+                   chi2_permut+=self.compute_statistic(group,permut=True)
+            else:
+                chi2_permut=self.compute_statistic(group,permut=True)
             chi2_permut_vector[permutation]=chi2_permut                
                
         if semi_parametric_option:
@@ -230,10 +202,11 @@ class indepandance ():
         else:
             return (chi2_original,np.count_nonzero(chi2_original<chi2_permut_vector)/self.permutation_number,None)
         
-    
+    def semi_parametric(self):
+        return self.permutation(semi_parametric_option=True)
     
     def heuristic_permutation(self,condition_df):
-        chi2_0, dof_0, p_0=self.classic_test(condition_df)     
+        chi2_0, dof_0, p_0=self.classic_test()     
         #apply heuristic one 
         if (p_0 >0.5 or p_0<0.001):
             return (chi2_0, dof_0, p_0)
@@ -241,12 +214,13 @@ class indepandance ():
         chi2_permut_vector=np.array([])
         
         for permutation in range (self.permutation_number):  
-            
-            chi2_permut=0            
-            for  name,group in condition_df.groupby(['Z']):                     
-               chi2_permut+=self.compute_statistic(group,permut=True)               
+            if self.ind_z:
+                chi2_permut=0            
+                for  name,group in condition_df.groupby([self.ind_z]):                     
+                   chi2_permut+=self.compute_statistic(group,permut=True)   
+            else:
+                chi2_permut=self.compute_statistic(group,permut=True)  
             chi2_permut_vector=np.append(chi2_permut_vector,chi2_permut)
-            
             #apply heuristic 2
             estimated_p_value=np.count_nonzero(chi2_0<chi2_permut_vector)/(permutation+1)
             maximum_magnitude=(stats.norm.ppf((1+self.normal_confidence)/2))/(2*math.sqrt(permutation+1))            
@@ -264,14 +238,17 @@ class indepandance ():
 
         return (chi2_0,np.count_nonzero(chi2_0<chi2_permut_vector)/self.permutation_number,None)
     
+    
+    
     def realize_R_test(self,type_test):
-      condition_df=self.column_treatment()           
+      #condition_df=self.column_treatment()           
       #several useful imports to make type transition between Python and R
        
       #pandas2ri uses a library required to convert Python dataframe to R dataframes
-      from rpy2.robjects import r, pandas2ri
+      from rpy2.robjects import r, pandas2ri,StrVector
       pandas2ri.activate()
-      r_dataframe=pandas2ri.py2ri(condition_df)
+      r_dataframe=pandas2ri.py2ri(self.df)
+      converted_ind_z=StrVector(self.ind_z)
       
       r('''
         # execute ci.test
@@ -285,27 +262,26 @@ class indepandance ():
         #two types of tests, according whether z is present or not    
         if (is.null(z)) { resultat=ci.test(x=x,y=y,data=df[,c(1,2)],test=test) }
         else {resultat=ci.test(x=x,y=y,z=z,data=df,test=test) }                
-        return (c(as.numeric(resultat$statistic),as.numeric(resultat$p.value)))                
+        return (c(as.numeric(resultat$statistic),as.numeric(resultat$p.value),as.numeric(resultat$parameter[1])))                
         }
         ''')
       ci_test = r['f']
       #condtionnal test
       
       if self.ind_z:
-          return ci_test('X','Y','Z',df=r_dataframe, test=type_test)
+          return ci_test(x=self.ind_x,y=self.ind_y,z=converted_ind_z,df=r_dataframe, test=type_test)
       #classic independance test
       else:          
-          return ci_test(x='X',y='Y',df=r_dataframe, test=type_test)
+          return ci_test(x=self.ind_x,y=self.ind_y,df=r_dataframe, test=type_test)
         
         
-    def semi_parametric(self,condition_df):
-        return self.permutation(condition_df, semi_parametric_option=True)
+    
     
     def realize_test(self): 
         if self.verbosity:
             print("Statistic test carried out is {} with degrees adjustement {} and following threshold value {}".format(self.calculation_method, self.dof_adjustment, self.threshold_pvalue))
-        if self.learner:           
-            type_test={"pearson":self.learner.chi2,"log-likelihood":self.learner.G2}
+        if self.usePyAgrum:           
+            type_test={"pearson":self.learner.chi2,"log-likelihood":self.learner.G2}           
             retour=type_test[self.calculation_method](self.ind_x,self.ind_y,self.ind_z)
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))
@@ -324,33 +300,67 @@ class indepandance ():
             
         else:
             type_test={ "classic":self.classic_test,"adjusted":self.adjusted_test,"permut":self.permutation,"permut_adjusted":self.heuristic_permutation,"sp":self.semi_parametric}
-            condition_df=self.column_treatment()            
-            #apply heuristic one of power rule            
+            #condition_df=self.column_treatment()            
+            #apply heuristic one of power rule     
+            if self.ind_z:
+                self.levels_x,self.levels_y, self.levels_z=self.levels[self.ind_x],self.levels[self.ind_y],self.levels[self.ind_z].prod()                
+            else:
+                self.levels_x,self.levels_y, self.levels_z=self.levels[self.ind_x],self.levels[self.ind_y],1
+            
             if self.power_rule and self.apply_heuristic_one():
                 retour=math.inf,1,None            
-            retour=type_test[self.dof_adjustment](condition_df)
+            retour=type_test[self.dof_adjustment]()            
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, pvalue: {} and degrees of freedom: {}".format(*retour))
         return retour 
     
+    def get_all_combinations(self,list):
+        #initialize with the levels of first index
+        ancient_combinations=[[level] for level in range(list[0])]
+        for i in range (1,len(list)):           
+            nlevels_z=list[i] 
+            new_combinations=[]
+            for level in range (nlevels_z): 
+                for combination in ancient_combinations:
+                    temp=combination.copy()
+                    temp.append(level)
+                    new_combinations.append(temp)
+            ancient_combinations=new_combinations.copy()
+        return [''.join(str(e) for e in combination) for combination in new_combinations]
     
-    
-    
-    
-    
-    def testIndepFromChi2(self,p_value=None):
-        """
-        Just prints the resultat of the independance test
-        """  
-        if p_value:
-            
-            variables=list(self.df.columns)
-        if p_value>=self.threshold_pvalue:
+    def compute_exact_statistic(self):
+        if self.bn:
+            if not hasattr(self, 'attr_name'):
+                self.levels=self.df.nunique()
+            self.levels_x,self.levels_y, self.levels_z=self.levels[self.ind_x],self.levels[self.ind_y],self.levels[self.ind_z].sum()
+            ie=gum.LazyPropagation(self.bn)
+            #2 cases: either 2 variables to compute, or conditionnaly to z
+            stat,nb_samples=0,self.df.shape[0]
             if self.ind_z:
-                print("From Chi2 tests, is '{}' indep from '{}' given {} : {}".format(variables[self.ind_x],variables[self.ind_y],[variables[x] for x in self.ind_z],p_value))
+                matrix_proba=ie.evidenceJointImpact([self.ind_x,self.ind_y],self.ind_z).toarray()
+                valuable_z=list(matrix_proba[:-2].shape)
+                all_combinations_z=self.get_all_combinations(valuable_z)
+                #convert under the form of slices indexes
+                all_indices_z=[tuple(slice(int(x),None,None) for x in combination) for combination in all_combinations_z]
+                for slice_z in all_indices_z:
+                    #we keep matrix probability for each level of z, multiplied by the number of rows to convert probabilities into real sizes
+                    matrix_z=matrix_proba[slice_z]
+                    stat+=stats.chi2_contingency(matrix_z, correction=False, lambda_=self.calculation_method)[0]*nb_samples
             else:
-                print("From Chi2 tests, is '{}' indep from '{}' : {}".format(variables[self.ind_x],variables[self.ind_y],p_value)) 
-        
+                #in case of only 2 variables
+                ie.addJointTarget({self.ind_x,self.ind_y})
+                matrix_proba=ie.jointPosterior([self.ind_x,self.ind_y]).toarray()
+                stat=stats.chi2_contingency(matrix_proba, correction=False, lambda_=self.calculation_method)[0]*nb_samples                 
+            # we then return the exact theoretical pvalue expected  
+            dof=(self.levels_x-1)*(self.levels_y-1)
+            return 1-stats.chi2.cdf(stat,dof) 
+        else:
+            raise TypeError("we can't compute exact theoretical test without bayesian network")
+    
+    
+    
+    
+
     
     
         
@@ -362,41 +372,56 @@ def compute_independance_tests(bn,sizes,test,nb_test=20,**dico_independance):
     computing the p-value for a list $lindep$ of conditional independence tests, using $test$ type.
     """
     #pvalue vector stores pvalues for a given size for several conditions
-    pvalue_vector=[]
-    
+    pvalue_vector=[]    
     #pvalue amplitude stores the shift between max and min pvalue measured
     pvalue_min_error,p_value_max_error=[],[]
+    le = preprocessing.LabelEncoder()
     
-    for size in sizes:  
-        print("la taille actuelle est de ", size)         
+    usePyAgrum=dico_independance.get('usePyAgrum',False)
+    for size in sizes:    
         pvalue_temp=np.empty(nb_test)
         for indice in range(nb_test):
             gum.generateCSV(bn,os.path.join("databases","sample_score.csv"),size,False)
             df=pd.read_csv(os.path.join("databases","sample_score.csv"))
+            df=df.apply(le.fit_transform,axis=0)
+            #we have to fit learner with the new randomly created df
+            if usePyAgrum:
+                dico_independance["learner"]=gum.BNLearner(os.path.join("databases","sample_score.csv"))
             pvalue_temp[indice]=indepandance(df,*test,**dico_independance).realize_test()[1]
-        print("le vecteur temp est ", pvalue_temp)
+        
         pvalue_vector.append(np.mean(pvalue_temp))
         pvalue_min_error.append((np.mean(pvalue_temp)-np.min(pvalue_temp)))
         p_value_max_error.append((np.max(pvalue_temp)-np.mean(pvalue_temp)))
     return pvalue_vector,np.array([pvalue_min_error,p_value_max_error])
 
-def plot_independance_tests(bn,sizes,lindep,nb_test=20,**dico_independance):
-
-    fig = plt.figure()
-    for test in lindep:
-        print("we study {} test".format(format_test(test)))
-        pvalues,pvalues_err=compute_independance_tests(bn,sizes,test,nb_test,**dico_independance)
-        plt.errorbar(sizes, pvalues, yerr=pvalues_err, uplims=True, lolims=True, label=format_test(test))
-    #at the end of computation, delete temporay file created
-    os.remove(os.path.join("databases","sample_score.csv"))
-    plt.tick_params(rotation=90)
-    plt.xlabel ("data size")
-    plt.ylabel ("pValue")
-    plt.legend(bbox_to_anchor=(0.15, 0.88, 0.7, .102), loc=3,ncol=3, mode="expand", borderaxespad=0.)
-    plt.title("{} test using {} technique".format(dico_independance.get("calculation_method","pearson"), \
-                                                     dico_independance.get("dof_adjustment","classic")))
+def plot_independance_tests(df,bn,sizes,lindep,nb_test=20,list_args_independance=[]):    
+    fig,ax = plt.subplots(nrows=len(list_args_independance), ncols=1, sharex=True,figsize =[6.4, 1.5*len_plot])
+    #define set of colors
+    cmap = plt.get_cmap('gnuplot')
+    colors = colors = [cmap(i) for i in np.linspace(0, 1, len(list_args_independance))]
+    for index, indep_criterion in enumerate(list_args_independance):
+        print("we study following criterion ", indep_criterion)
+        for color,test in zip(colors,lindep):
+            print("we study {} test of following color : {}".format(format_test(test),color))
+            #compute exact expected statistic value and modifying a bit true value to display all lines
+            true_value=indepandance(df,*test,**indep_criterion,bn=bn).compute_exact_statistic()+(random.random()*0.1-0.05)        
+            pvalues,pvalues_err=compute_independance_tests(bn,sizes,test,nb_test,**indep_criterion)            
+            ax[index].errorbar(sizes, pvalues, yerr=pvalues_err, uplims=True, lolims=True, label=format_test(test),color=color)
+            ax[index].axhline(true_value,linewidth=0.5,color=color)
+            ax[index].set_ylabel ("pValue")
+            ax[index].set_title("{} test using {} technique".format(indep_criterion.get("calculation_method","pearson"), \
+                                                     indep_criterion.get("dof_adjustment","classic")))
+        #at the end of computation, delete temporay file created
+        os.remove(os.path.join("databases","sample_score.csv"))
+    plt.tick_params(axis='x',rotation=90)
+    plt.xlabel ("data size") 
+    box = ax[len(list_args_independance)-1].get_position()
+    ax[len(list_args_independance)-1].set_position([box.x0, box.y0 + box.height * 0.2,
+                     box.width, box.height * 0.8])    
+    ax[len(list_args_independance)-1].legend(bbox_to_anchor=(0.5, -0.5), loc='upper center',ncol=3, mode="expand", fancybox=True, shadow=True)    
     fig.tight_layout()
-    plt.savefig("resultat_independance_R.png")
+    return ax
+    
 
 def format_test(test):
     if test[2]:
@@ -428,10 +453,19 @@ def controler_temps(nb_secs):
         return fonction_modifiee
     return decorateur
 
+
+
+
    
 if __name__ == "__main__":     
     
-    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))   
+    
+    
+    #gnb.showBN(alarm_bn,"6")
+    #gum.generateCSV(alarm_bn,"big_sample_alarm.csv",200000,with_labels=True)
+    
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
+    sizes=[20000,50000,100000]
     """
     lindep=[("asia","smoke",['lung']),    ("asia","smoke",[]),
                                           ("dysp","smoke",[]),
@@ -439,35 +473,45 @@ if __name__ == "__main__":
                                           ("tub","bronc",[]),
                                           ("tub","bronc",["dysp"])]
     """
-    lindep=[("asia","smoke",['lung'])]
-    sizes=[20000,50000,100000,200000]
-    #plot_independance_tests(asia_bn,sizes,lindep,nb_test=20,R_test=True)
-    #gnb.showBN(asia_bn,size="20")
+    lindep=[("asia","smoke",[]),("asia","smoke",['lung'])]
+    learner=gum.BNLearner("sample_asia.csv")
+    indep_criterion=[{"learner":learner, "usePyAgrum":True},{"calculation_method":"log-likelihood"}]
+    df=pd.read_csv("sample_asia.csv")
+    plot_independance_tests(df,asia_bn,sizes,lindep,nb_test=20,list_args_independance=indep_criterion)  
     
-    """
-    ie=gum.LazyPropagation(asia_bn)
-    ie.addJointTarget({"asia"})
-    ie.makeInference()
-    ie.jointPosterior({"asia"}).toarray()
-    """
     
+   
+    """
     df_test = pd.DataFrame({'X': ["foo", "bar", "foo", "foo", "bar", "bar"], 'Y': ["one", "two", "one", "two", "one","two"],'Z1': ["dull", "shiny", "shiny", "dull", "shiny","shiny"],'Z2': ["hello","hello","hello","hello","mince","mince"]})
-    df_test.to_csv("df_test.csv")                 
-    #gum.generateCSV(asia_bn,"sample_asia.csv",100,False)
+    
     learner=gum.BNLearner("df_test.csv")
     #avec py agrum
-    print(indepandance(df_test,"X","Y",["Z1","Z2"],learner=learner).realize_test())
+    print(indepandance(df_test,"X","Y",["Z1","Z2"],learner=learner,usePyAgrum=True).realize_test())
     #avec R
     print(indepandance(df_test,"X","Y",["Z1","Z2"],R_test=True).realize_test())
     #avec own program
     print(indepandance(df_test,"X","Y",["Z1","Z2"]).realize_test())
+    """
+    sizes=[20000,50000,100000]
+    p_value1=[0.2,0.5,0.4]
+    p_value2=[0.1,0.2,0.9]
+    len_plot=4
+    fig,ax = plt.subplots(nrows=len_plot, ncols=1, sharex=True,figsize =[6.4, 1.5*len_plot],dpi=100)
+    for index in range(len_plot):
+        ax[index].plot(sizes, p_value1, label="test {} ".format(index))
+        ax[index].axhline(0.5,linewidth=0.5)
+        ax[index].set_ylabel ("pValue")
+        ax[index].set_title("test {} ".format(index))
+    fig.tight_layout()
+    plt.savefig("resultat_independance_R.png")
+  
+  
+   
     
-    #avec pre traitement df
-    df_traited=indepandance(df_test,"X","Y",["Z1","Z2"]).column_treatment()
-    df_traited.to_csv("df_traited.csv")
-    learner=gum.BNLearner("df_traited.csv")
-    #avec py agrum
-    print(indepandance(df_traited,"X","Y",["Z"],learner=learner).realize_test())
+    
+    
+    
+    
     
     
     

@@ -10,11 +10,10 @@ import pandas as pd
 import os
 from hpc import hpc
 import itertools 
-import pickle
-import pprint as pp
+import numbers
 import pyAgrum.lib.ipython as gnb
 import pyAgrum.lib.bn_vs_bn as comp
-from functools import partial
+from sklearn import preprocessing
 
 class H2PC ():
     """H2PC is a new hybrid algorithm combining scoring and constraint-structured learning,
@@ -24,7 +23,7 @@ class H2PC ():
     
     """
    
-    def __init__(self,df,threshold_pvalue=0.05,verbosity=False,score_algorithm="Greedy_climbing",optimized=False,filtering="AND",**independance_args):
+    def __init__(self,learner,df,threshold_pvalue=0.05,verbosity=False,score_algorithm="greedy_climbing",optimized=False,filtering="AND",**independance_args):
         #check if file is present, if instance of the parameter is correct and the file's extension
         """
         if not isinstance(filename, str):
@@ -44,9 +43,12 @@ class H2PC ():
            raise TypeError ("expected format is a dataframe")
         else:
             if df.isnull().values.any():
-                raise ValueError ("we can't perform tests on databases with missng values")
-            else:
-                self.df=df  
+                raise ValueError ("we can't for the moment execute tests on databases with missing values")
+            else: 
+                #we convert each column as factor vectors
+                le = preprocessing.LabelEncoder()
+                self.df=df.apply(le.fit_transform,axis=0)
+                
         
         
         if isinstance (threshold_pvalue,numbers.Number): 
@@ -61,9 +63,9 @@ class H2PC ():
         if isinstance(verbosity,bool):
             self.verbosity=verbosity
         else:
-            raise TypeError("Expect a boolean for verbosity")
-            
-        if score_algorithm in ["Greedy_climbing","tabu_search"]:
+            raise TypeError("Expect a boolean for verbosity")            
+        
+        if score_algorithm in ["greedy_climbing","tabu_search"]:
             self.score_algorithm=score_algorithm
         else:
             raise AssertionError("Only the two following algorithms are for instance suitable : Greedy_climbing, tabu_search")
@@ -84,11 +86,15 @@ class H2PC ():
         self.whitelisted=set()
         
         if (score_algorithm=='tabu_search'):
-            self.tabu_size,self.nb_decrease=independance_args.get("tabu_size",100),independance_args.get("nb_decrease",50)
+            self.tabu_size,self.nb_decrease=independance_args.get("tabu_size",100),independance_args.get("nb_decrease",20)
         
+        self.learner=learner      
+        if not isinstance(self.learner,gum.pyAgrum.BNLearner):
+            raise TypeError("Only possible values for learner are pyAgrum.BNLearner or None") 
+           
         self.independance_args=independance_args
-        
-            
+        self.independance_args[learner]=learner       
+        self.independance_args['levels']=self.df.nunique()   
       
     def addForbiddenArc(self,arc):
         if isinstance(arc,gum.pyAgrum.Arc):
@@ -129,12 +135,12 @@ class H2PC ():
     def check_consistency(self,dictionnary_neighbourhood):
         #initialize dictionnary of empty sets
         consistent_dictionnary_neighbourhood={k: set() for k in self.variables}
-    
+        print("MB avant filtering est ", dictionnary_neighbourhood)
         for couple in itertools.combinations(dictionnary_neighbourhood.keys(),2): 
             
             variable_1,variable_2=couple 
             neighbourhood_variable1=dictionnary_neighbourhood[variable_1].copy()
-            neighbourhood_variable2=dictionnary_neighbourhood[variable_2].copy()
+            neighbourhood_variable2=dictionnary_neighbourhood[variable_2].copy()            
             if self.filtering=="AND":
                 if (variable_1 in neighbourhood_variable2) and (variable_2 in neighbourhood_variable1):                
                     #under the assumption of exctness of tests, if variable 1 is in neighbourhood of variable 2
@@ -168,9 +174,10 @@ class H2PC ():
            
      
     def _learn_graphical_structure(self):
-        possible_algorithm = {'Greedy_climbing': self.learner.useGreedyHillClimbing, 'tabu_search': self.learner.useLocalSearchWithTabuList}        
-        
-        possible_algorithm[self.score_algorithm](*self.independance_args)
+        if self.score_algorithm=='greedy_climbing':
+            self.learner.useGreedyHillClimbing()
+        else:
+            self.learner.useLocalSearchWithTabuList(self.tabu_size,self.nb_decrease)       
         bn_learned=self.learner.learnBN()  
         return bn_learned
     
@@ -178,7 +185,7 @@ class H2PC ():
     def _HPC_global(self):
         dico_couverture_markov={}
         for target in self.variables:  
-            print("la variable est ",target)
+            
             dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,independance_args=self.independance_args).couverture_markov()           
             print("We compute with HPC the neighbours of '{}' : '{}' \n\n".format(target,dico_couverture_markov[target]))
             if self.verbosity:
@@ -214,9 +221,10 @@ class H2PC ():
         if self.optimized:
             dico_couverture_markov=self._HPC_optimized()
         else:
-            dico_couverture_markov=self._HPC_global()      
-        
+            dico_couverture_markov=self._HPC_global()     
         self.consistent_neighbourhood=self.check_consistency(dico_couverture_markov)
+        
+        
         """
         with open('dictionnary', 'wb') as fichier:
              mon_pickler = pickle.Pickler(fichier)
@@ -249,26 +257,42 @@ class H2PC ():
         
         
 if __name__ == "__main__":
-    true_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
-    #gnb.showBN(true_bn,size="4")
-    gum.generateCSV(true_bn,"sample_alarm.csv",20000,False)
     
-    #with tabu search
-    
-    #learner=gum.BNLearner("sample_alarm.csv") 
-    """
-    learner.useLocalSearchWithTabuList()
-    bn2=learner.learnBN()    
-    gnb.showBN(bn2,size="4")
-    """
-    
-    
-    
-    #with h2pc coupled with tabu search
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
+    gnb.showBN(asia_bn)
     df=pd.read_csv("sample_asia.csv")
-    objet_1=H2PC(df,threshold_pvalue=0.05,verbosity=False,score_algorithm="Greedy_climbing",optimized=False,filtering="AND",dof_adjustment="classic").learnBN()
-    #dag_h2pc=H2PC(learner,score_algorithm="tabu_search",optimized=False,filtering="OR",tabu_size=1000,nb_decrease=500).learnBN()
-    #gnb.showBN(dag_h2pc,size="4")
+    learner=gum.BNLearner("sample_asia.csv")
+    bn_H2PC=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",R_test=True).learnBN()
+    gnb.showBN(bn_H2PC)
+    
+    
+    learner=gum.BNLearner("sample_asia.csv")
+    learner.useMIIC()
+    bn_miic=learner.learnBN()
+    gnb.showBN(bn_miic)
+    
+    
+    
+    """
+    alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
+    #gnb.showBN(alarm_bn,"6")
+    #gum.generateCSV(alarm_bn,"sample_alarm.csv",20000,with_labels=True)
+    df=pd.read_csv("sample_alarm.csv")
+    learner=gum.BNLearner("sample_alarm.csv")
+    bn_H2PC_alarm=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",usePyAgrum=True).learnBN()
+    
+    
+    gnb.showBN(bn_H2PC_alarm)
+    
+    
+    learner=gum.BNLearner("sample_alarm.csv")
+    learner.useMIIC()
+    bn_miic=learner.learnBN()
+    gnb.showBN(bn_miic)
+    """
+    
+
+    
     
     
     

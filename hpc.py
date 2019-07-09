@@ -74,6 +74,7 @@ class hpc():
         #add verbosity and threshold value
         self.independance_args['threshold_pvalue']=self.threshold_pvalue
         self.independance_args['verbosity']=self.threshold_pvalue
+        self.independance_args['levels']=independance_args.get('levels',self.df.nunique())
     
     def _is_node_linked(self,arc):        
         if (arc[0]==self.target):            
@@ -93,7 +94,7 @@ class hpc():
           #optimisation : 0 or 1 node in PCS --> PC == PCS
          if(len(PCS) < 2):
              markov_dictionnary["neighbours"]=PCS                             
-             return(markov_dictionnary)
+             return(markov_dictionnary["neighbours"])
           # 2. [RSPS] Search remaining spouses superset, those not already in PCS
           
    
@@ -105,7 +106,7 @@ class hpc():
          if len(super_voisinage)<3:
              #in that case, impossible to have found a spouse, as it is required to have at least 2 parents to keep on in the previous phase
              markov_dictionnary["neighbours"]=PCS                             
-             return(markov_dictionnary)
+             return(markov_dictionnary["neighbours"])
          
           # 3. [PC] Get the Parents and Children from nodes within PCS and RSPS
          
@@ -290,6 +291,15 @@ class hpc():
                 print("set of spouses is ", spouses_set)
    
         return(spouses_set)
+    
+    def testIndepFromChi2(var1,var2,result_test,condition=[]):        
+        """
+        Just prints the resultat of independance test
+        """
+        if condition:
+            print(" '{}' is indep from '{}' given {} ? ==> {}".format(var1,var2,condition,result_test))
+        else:
+            print("From Chi2 tests, is '{}' indep from '{}' ? : {}".format(var1,var2,result_test))
             
     def _IAMBFDR(self,target,voisinage):
         # whitelisted nodes are included by default (if there's a direct arc
@@ -474,14 +484,13 @@ class hpc():
 
 if __name__ == "__main__":  
     import pyAgrum.lib.bn_vs_bn as comp
-    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))      
-    #gum.generateCSV(asia_bn,"sample_asia.csv",200000,False)    
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif")) 
     df=pd.read_csv("sample_asia.csv")
-    gnb.showBN(asia_bn)
+    #gnb.showBN(asia_bn)
     
     
     #print(hpc('either',df,threshold_pvalue=0.05,R_test=True).couverture_markov())
-    
+    """
     true_arcs=asia_bn.arcs()
     
     learner_greedy=gum.BNLearner("sample_asia.csv")
@@ -489,8 +498,11 @@ if __name__ == "__main__":
     BNgreedy=learner_greedy.learnBN()
     gnb.showBN(BNgreedy)
     
-    
-    learner_H2PC=gum.BNLearner("sample_asia.csv")
+    for x in asia_bn.nodes():
+        print(asia_bn.variable(x))
+        
+        
+    learner_H2PC=gum.BNLearner("sample_asia.csv",asia_bn)
     for arc in true_arcs:
         learner_H2PC.addPossibleEdge(*arc)
     learner_H2PC.useLocalSearchWithTabuList(100,20)
@@ -501,6 +513,14 @@ if __name__ == "__main__":
     print(comp.GraphicalBNComparator(BNgreedy,asia_bn).scores())
     print(comp.GraphicalBNComparator(BN_H2PC,asia_bn).scores())
     
+    print(hpc("asia",df,R_test=True).couverture_markov())
+    """
+    
+    alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
+    #gnb.showBN(alarm_bn,"8")
+    #gum.generateCSV(alarm_bn,"sample_alarm.csv",20000,with_labels=True)
+    df=pd.read_csv("sample_alarm.csv")
+    print(hpc("BP",df,R_test=True,debug=True).couverture_markov())
 
     
 
