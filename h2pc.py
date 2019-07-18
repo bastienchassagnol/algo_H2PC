@@ -14,6 +14,9 @@ import numbers
 import pyAgrum.lib.ipython as gnb
 import pyAgrum.lib.bn_vs_bn as comp
 from sklearn import preprocessing
+from pyAgrum.lib.bn2scores import computeScores
+from independances import indepandance
+
 
 class H2PC ():
     """H2PC is a new hybrid algorithm combining scoring and constraint-structured learning,
@@ -23,7 +26,7 @@ class H2PC ():
     
     """
    
-    def __init__(self,learner,df,threshold_pvalue=0.05,verbosity=False,score_algorithm="greedy_climbing",optimized=False,filtering="AND",**independance_args):
+    def __init__(self,learner,df,threshold_pvalue=0.05,verbosity=False,score_algorithm="greedy_climbing",optimized=False,filtering="AND",compute_number=False,**independance_args):
         #check if file is present, if instance of the parameter is correct and the file's extension
         """
         if not isinstance(filename, str):
@@ -91,10 +94,15 @@ class H2PC ():
         self.learner=learner      
         if not isinstance(self.learner,gum.pyAgrum.BNLearner):
             raise TypeError("Only possible values for learner are pyAgrum.BNLearner or None") 
-           
+        
         self.independance_args=independance_args
-        self.independance_args[learner]=learner       
-        self.independance_args['levels']=self.df.nunique()   
+        self.independance_args['learner']=learner       
+        self.independance_args['levels']=self.df.nunique() 
+        
+        if not (isinstance(compute_number,bool)):
+            raise TypeError("compute_test must a boolean value")
+        else:
+            self.compute_number=compute_number
       
     def addForbiddenArc(self,arc):
         if isinstance(arc,gum.pyAgrum.Arc):
@@ -135,7 +143,6 @@ class H2PC ():
     def check_consistency(self,dictionnary_neighbourhood):
         #initialize dictionnary of empty sets
         consistent_dictionnary_neighbourhood={k: set() for k in self.variables}
-        print("MB avant filtering est ", dictionnary_neighbourhood)
         for couple in itertools.combinations(dictionnary_neighbourhood.keys(),2): 
             
             variable_1,variable_2=couple 
@@ -153,7 +160,10 @@ class H2PC ():
                     #is equivalent that variable 2 is in neighbourhood of variable 1
                     consistent_dictionnary_neighbourhood[variable_1]=consistent_dictionnary_neighbourhood[variable_1].union({variable_2})
                     consistent_dictionnary_neighbourhood[variable_2]=consistent_dictionnary_neighbourhood[variable_2].union({variable_1})
-                
+            
+            if self.verbosity:
+                if ((variable_1 in neighbourhood_variable2) and (variable_2 not in neighbourhood_variable1)) or ((variable_1 not in neighbourhood_variable2) and (variable_2 in neighbourhood_variable1)):
+                    print("there's an assymetry with variables {} and {} of respective neighbourds: {} and {} ".format(variable_1,variable_2, neighbourhood_variable1, neighbourhood_variable2))
              
         return consistent_dictionnary_neighbourhood
        
@@ -186,8 +196,8 @@ class H2PC ():
         dico_couverture_markov={}
         for target in self.variables:  
             
-            dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,independance_args=self.independance_args).couverture_markov()           
-            print("We compute with HPC the neighbours of '{}' : '{}' \n\n".format(target,dico_couverture_markov[target]))
+            dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,**self.independance_args).couverture_markov()           
+            
             if self.verbosity:
                 print("We compute with HPC the neighbours of '{}' : '{}' \n\n".format(target,dico_couverture_markov[target]))
         return dico_couverture_markov
@@ -205,10 +215,10 @@ class H2PC ():
                 known_good={kv[0] for kv in dico_couverture_markov.items() if target in kv[1]} 
                 if self.verbosity:
                     print("known good nodes inferred are '{}' and known bad nodes inferred are '{}' ".format(known_bad,known_good))                    
-            dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,known_bad=known_bad,known_good=known_good,independance_args=self.independance_args).couverture_markov()["neighbours"]
+            dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,known_bad=known_bad,known_good=known_good,**self.independance_args).couverture_markov()["neighbours"]
             if self.verbosity:
                 print("We compute with HPC the neighbours of '{}' :'{}' \n\n".format(target,dico_couverture_markov[target]) )
-            print("We compute with HPC the neighbours of '{}' :'{}' \n\n".format(target,dico_couverture_markov[target]) )
+            
         return dico_couverture_markov
                 
                     
@@ -216,8 +226,9 @@ class H2PC ():
     
     
     def learnBN(self):
+        #init number tests to 0
+        indepandance.number_tests=0
         #computation of local neighbourhood for each node 
-   
         if self.optimized:
             dico_couverture_markov=self._HPC_optimized()
         else:
@@ -240,12 +251,15 @@ class H2PC ():
         unique_possible_edges=self._unique_edges(self.consistent_neighbourhood)
         #add set of unique edges as unique possible addings for h2pc
         #print("set of unique possible edges is ",unique_possible_edges)
-        if self.verbosity:
-            print("set of unique possible edges is '{}'".format(unique_possible_edges))
+        
         #score_based learning according to input_score
         self._add_set_unique_possible_edges(unique_possible_edges)   
-        bn_learned=self._learn_graphical_structure()    
-        return bn_learned
+        bn_learned=self._learn_graphical_structure()  
+        if self.compute_number:
+            ("we return both bn learnt and number of statistic tests performed")
+            return (bn_learned,indepandance.number_tests)
+        else:
+            return bn_learned
   
    
         
@@ -257,31 +271,30 @@ class H2PC ():
         
         
 if __name__ == "__main__":
-    
+    """
     asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
-    gnb.showBN(asia_bn)
-    df=pd.read_csv("sample_asia.csv")
-    learner=gum.BNLearner("sample_asia.csv")
-    bn_H2PC=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",R_test=True).learnBN()
-    gnb.showBN(bn_H2PC)
+    #gnb.showBN(asia_bn)
+    df=pd.read_csv(os.path.join("databases","sample_asia.csv"))
+    learner=gum.BNLearner(os.path.join("databases","sample_asia.csv"))
+    temps_debut=time.time()
+    bn_H2PC=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",usePyAgrum=True)  
+    #print("le temps d'exceution est {} .".format(time.time()-temps_debut))
     
     
-    learner=gum.BNLearner("sample_asia.csv")
-    learner.useMIIC()
-    bn_miic=learner.learnBN()
-    gnb.showBN(bn_miic)
-    
+   
     
     
     """
     alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
-    #gnb.showBN(alarm_bn,"6")
-    #gum.generateCSV(alarm_bn,"sample_alarm.csv",20000,with_labels=True)
+    #gnb.showBN(alarm_bn,"6")    
     df=pd.read_csv("sample_alarm.csv")
+    computeScores(alarm_bn,"sample_alarm.csv")
+    
+    
+    
+    
     learner=gum.BNLearner("sample_alarm.csv")
-    bn_H2PC_alarm=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",usePyAgrum=True).learnBN()
-    
-    
+    bn_H2PC_alarm=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",usePyAgrum=True).learnBN()    
     gnb.showBN(bn_H2PC_alarm)
     
     
@@ -289,7 +302,9 @@ if __name__ == "__main__":
     learner.useMIIC()
     bn_miic=learner.learnBN()
     gnb.showBN(bn_miic)
-    """
+    
+    print("comparaisosn entre miic et h2pc ", comp.GraphicalBNComparator(bn_miic,alarm_bn).scores())
+    print("comparaisosn entre normal et h2pc ", comp.GraphicalBNComparator(bn_H2PC_alarm,alarm_bn).scores())
     
 
     

@@ -17,14 +17,18 @@ from scipy import stats
 import math
 import matplotlib.pyplot as plt
 import pyAgrum.lib.ipython as gnb
-import random
+import random as rd
+
+from utils import compute_time, format_test,format_args_indep
 
 
 
 class indepandance ():
+    """class attribute incrementing at each creation of the object"""
+    number_tests = 0 # Le compteur vaut 0 au départ
     
-    def __init__(self,df,ind_x,ind_y,conditions=[],**independance_args):
-        
+    def __init__(self,df,ind_x,ind_y,conditions=[],reset_compteur=False,**independance_args):
+        indepandance.number_tests += 1
         self.usePyAgrum=independance_args.get('usePyAgrum',False)
         if not isinstance(self.usePyAgrum,bool):
             raise TypeError("Only possible values for usePyAgrum are boolean")           
@@ -88,16 +92,19 @@ class indepandance ():
         self.ind_y=self.check_value(ind_y,liste_variables)         
         self.ind_z=list({self.check_value(indice,liste_variables) for indice in conditions})
         
+        
         #check that variables to check are not in the condtionning set
         if self.ind_x in self.ind_z or self.ind_y  in self.ind_z:            
             raise ValueError("duplication of either x or y in the condition set") 
         
         #controle empty values and nature of dataframe
         #then, we only select columns of interest
+        
         if not isinstance(df,pd.core.frame.DataFrame):
            raise TypeError ("expected format is a dataframe")
         else:
-            self.df=df[[self.ind_x,self.ind_y,*self.ind_z]]    
+            self.df=df   
+        
         
         
         if not self.usePyAgrum and not self.R_test:
@@ -260,14 +267,13 @@ class indepandance ():
         df[,i] <- as.factor(df[,i])
         }
         #two types of tests, according whether z is present or not    
-        if (is.null(z)) { resultat=ci.test(x=x,y=y,data=df[,c(1,2)],test=test) }
+        if (is.null(z)) { resultat=ci.test(x=x,y=y,data=df,test=test) }
         else {resultat=ci.test(x=x,y=y,z=z,data=df,test=test) }                
         return (c(as.numeric(resultat$statistic),as.numeric(resultat$p.value),as.numeric(resultat$parameter[1])))                
         }
         ''')
       ci_test = r['f']
       #condtionnal test
-      
       if self.ind_z:
           return ci_test(x=self.ind_x,y=self.ind_y,z=converted_ind_z,df=r_dataframe, test=type_test)
       #classic independance test
@@ -279,12 +285,13 @@ class indepandance ():
     
     def realize_test(self): 
         if self.verbosity:
-            print("Statistic test carried out is {} with degrees adjustement {} and following threshold value {}".format(self.calculation_method, self.dof_adjustment, self.threshold_pvalue))
-        if self.usePyAgrum:           
+           print("Statistic test carried out is {} with degrees adjustement {} and following threshold value {}".format(self.calculation_method, self.dof_adjustment, self.threshold_pvalue))
+        if self.usePyAgrum: 
             type_test={"pearson":self.learner.chi2,"log-likelihood":self.learner.G2}           
             retour=type_test[self.calculation_method](self.ind_x,self.ind_y,self.ind_z)
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))
+            
         elif self.R_test:
             #dico to convert Python parameters to R parameters
             python_test=self.dof_adjustment+"_"+self.calculation_method
@@ -299,6 +306,7 @@ class indepandance ():
                 print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))              
             
         else:
+            
             type_test={ "classic":self.classic_test,"adjusted":self.adjusted_test,"permut":self.permutation,"permut_adjusted":self.heuristic_permutation,"sp":self.semi_parametric}
             #condition_df=self.column_treatment()            
             #apply heuristic one of power rule     
@@ -394,128 +402,129 @@ def compute_independance_tests(bn,sizes,test,nb_test=20,**dico_independance):
         p_value_max_error.append((np.max(pvalue_temp)-np.mean(pvalue_temp)))
     return pvalue_vector,np.array([pvalue_min_error,p_value_max_error])
 
-def plot_independance_tests(df,bn,sizes,lindep,nb_test=20,list_args_independance=[]):    
-    fig,ax = plt.subplots(nrows=len(list_args_independance), ncols=1, sharex=True,figsize =[6.4, 1.5*len_plot])
+def plot_independance_tests(df,bn,sizes,lindep,nb_test=20,list_args_independance=[]):  
+    """
+    Subplot p-value for a list $lindep$ of conditional independence tests, using independance criterion 
+    $list_args_independance$ for each subplot.
+    """
+    fig,ax = plt.subplots(nrows=len(list_args_independance), ncols=1, sharex=True,figsize =[6.4, 2*len(list_args_independance)])
     #define set of colors
     cmap = plt.get_cmap('gnuplot')
-    colors = colors = [cmap(i) for i in np.linspace(0, 1, len(list_args_independance))]
+    colors = [cmap(i) for i in np.linspace(0.2, 1, len(lindep))]
     for index, indep_criterion in enumerate(list_args_independance):
-        print("we study following criterion ", indep_criterion)
         for color,test in zip(colors,lindep):
-            print("we study {} test of following color : {}".format(format_test(test),color))
             #compute exact expected statistic value and modifying a bit true value to display all lines
-            true_value=indepandance(df,*test,**indep_criterion,bn=bn).compute_exact_statistic()+(random.random()*0.1-0.05)        
+            true_value=indepandance(df,*test,**indep_criterion,bn=bn).compute_exact_statistic()+(rd.random()*0.1-0.05)        
             pvalues,pvalues_err=compute_independance_tests(bn,sizes,test,nb_test,**indep_criterion)            
             ax[index].errorbar(sizes, pvalues, yerr=pvalues_err, uplims=True, lolims=True, label=format_test(test),color=color)
-            ax[index].axhline(true_value,linewidth=0.5,color=color)
+            #ax[index].axhline(true_value,linewidth=0.5,color=color)
             ax[index].set_ylabel ("pValue")
-            ax[index].set_title("{} test using {} technique".format(indep_criterion.get("calculation_method","pearson"), \
-                                                     indep_criterion.get("dof_adjustment","classic")))
-        #at the end of computation, delete temporay file created
-        os.remove(os.path.join("databases","sample_score.csv"))
-    plt.tick_params(axis='x',rotation=90)
+            ax[index].set_title(format_args_indep(indep_criterion))
+    
+    
+
+    #at the end of computation, delete temporay file created
+    if os.path.exists(os.path.join("databases","sample_score.csv")):
+        os.remove(os.path.join("databases","sample_score.csv"))    
+    plt.tick_params(axis='x',rotation=45)
     plt.xlabel ("data size") 
     box = ax[len(list_args_independance)-1].get_position()
-    ax[len(list_args_independance)-1].set_position([box.x0, box.y0 + box.height * 0.2,
-                     box.width, box.height * 0.8])    
-    ax[len(list_args_independance)-1].legend(bbox_to_anchor=(0.5, -0.5), loc='upper center',ncol=3, mode="expand", fancybox=True, shadow=True)    
+    ax[len(list_args_independance)-1].set_position([box.x0, box.y0 + box.height * 0.4,
+                     box.width, box.height * 0.6])    
+    ax[len(list_args_independance)-1].legend(bbox_to_anchor=(0, -1,1.5, .102), loc=3,ncol=2, mode="expand", fancybox=True, shadow=True)    
+    fig.suptitle("Independance tests carried out for several sizes",y=1.05,weight ="bold")
     fig.tight_layout()
-    return ax
+    return fig
+
+def plot_indep_time_computation(bn,lindep, ntimes,sizes,list_args_independance=[{"calculation_method":"pearson","R_test":True},{"calculation_method":"pearson"},{"usePyAgrum":True,"calculation_method":"pearson"}]):
+    """
+    Subplot time computation for a list $lindep$ of conditional independence tests carried on the same database $ntimes$
+     for databases of sizes $sizes$, this done for each indep_criterion $list_args_independance$ given. 
+    """
     
-
-def format_test(test):
-    if test[2]:
-        return ("{} indep {} given {}.".format(*test))
-    else:
-        return ("{} indep {}.".format(*test[0:2]))
-
-
-import time
-
-def controler_temps(nb_secs):
-    """Contrôle le temps mis par une fonction pour s'exécuter.
-    Si le temps d'exécution est supérieur à nb_secs, on affiche une alerte"""
+    fig,ax = plt.subplots(nrows=len(lindep), ncols=1, sharex=True,figsize =[6.4, 2*len(lindep)])
     
-    def decorateur(fonction_a_executer):
-        """Notre décorateur. C'est lui qui est appelé directement LORS
-        DE LA DEFINITION de notre fonction (fonction_a_executer)"""
-        
-        def fonction_modifiee():
-            """Fonction renvoyée par notre décorateur. Elle se charge
-            de calculer le temps mis par la fonction à s'exécuter"""
+ 
+    #define set of colors
+    cmap = plt.get_cmap('gnuplot')
+    colors = [cmap(i) for i in np.linspace(0.2, 1, len(list_args_independance))]
+    for index, indep_relation_ship in enumerate(lindep):        
+        for color,test in zip(colors,list_args_independance):
+            store_time,use_pyagrum=[],test.get("usePyAgrum",False)
+            for size in sizes:
+                #we generate df temporaly with the wanted size
+                gum.generateCSV(bn,os.path.join("databases","temp_size.csv"),size,False,with_labels=True)
+                df=pd.read_csv(os.path.join("databases","temp_size.csv"))
+                #we generate a function with the expected return
+                if use_pyagrum:
+                    test["learner"]=gum.BNLearner(os.path.join("databases","temp_size.csv"))
+                modified_function=compute_time(indepandance(df,*indep_relation_ship,**test).realize_test)
+                temps_execution=0
+                for iteration in range (ntimes):
+                    temps_execution+=modified_function()
+                store_time.append(temps_execution)
             
-            tps_avant = time.time() # Avant d'exécuter la fonction
-            valeur_renvoyee = fonction_a_executer() # On exécute la fonction
-            tps_apres = time.time()
-            tps_execution = tps_apres - tps_avant
-            print("le temps d'ex est de ", tps_execution)
-            return valeur_renvoyee
-        return fonction_modifiee
-    return decorateur
+            ax[index].plot(sizes, store_time, label=format_args_indep(test),color=color,marker='+')
+        ax[index].set_ylabel ("Time execution")
+        ax[index].set_yscale('log')
+        ax[index].set_title(format_test(indep_relation_ship))        
+    
+    #at the end of computation, delete temporay file created
+    if os.path.exists(os.path.join("databases","temp_size.csv")):
+        os.remove(os.path.join("databases","temp_size.csv")) 
+    plt.tick_params(axis='x',rotation=45)
+    plt.xlabel ("data size") 
+    box = ax[len(lindep)-1].get_position()
+    ax[len(lindep)-1].set_position([box.x0, box.y0 + box.height * 0.4,
+                     box.width, box.height * 0.6])    
+    ax[len(lindep)-1].legend(bbox_to_anchor=(0.0, -1,1., .102), loc=3, mode="expand", fancybox=True, shadow=True)    
+    fig.suptitle("Times to carry out independance tests for several sizes of datasets, each computed {} times".format(ntimes),y=1.0,weight ="bold")
+    fig.tight_layout()
+    return fig
+    
+
+
+
+
+
+
+
+    
 
 
 
 
    
-if __name__ == "__main__":     
+if __name__ == "__main__":   
+    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))    
+    learner=gum.BNLearner("sample_asia.csv")
+    indep_criterion=[{"learner":learner, "usePyAgrum":True},{"learner":learner,"calculation_method":"log-likelihood","usePyAgrum":True}]
+    df=pd.read_csv("sample_asia.csv")
+    #♣plot_independance_tests(df,asia_bn,sizes,lindep,nb_test=20,list_args_independance=indep_criterion)
     
-    
-    
-    #gnb.showBN(alarm_bn,"6")
-    #gum.generateCSV(alarm_bn,"big_sample_alarm.csv",200000,with_labels=True)
-    
-    asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif"))
-    sizes=[20000,50000,100000]
-    """
     lindep=[("asia","smoke",['lung']),    ("asia","smoke",[]),
                                           ("dysp","smoke",[]),
                                           ("dysp","smoke",["lung","bronc"]),
                                           ("tub","bronc",[]),
                                           ("tub","bronc",["dysp"])]
-    """
-    lindep=[("asia","smoke",[]),("asia","smoke",['lung'])]
-    learner=gum.BNLearner("sample_asia.csv")
-    indep_criterion=[{"learner":learner, "usePyAgrum":True},{"calculation_method":"log-likelihood"}]
-    df=pd.read_csv("sample_asia.csv")
-    plot_independance_tests(df,asia_bn,sizes,lindep,nb_test=20,list_args_independance=indep_criterion)  
     
-    
+    sizes,ntimes=[200,1000,5000],10
+    plot_indep_time_computation(asia_bn,lindep, ntimes,sizes,list_args_independance=[{"calculation_method":"log-likelihood"},{"usePyAgrum":True,"calculation_method":"pearson"}])
+
    
-    """
-    df_test = pd.DataFrame({'X': ["foo", "bar", "foo", "foo", "bar", "bar"], 'Y': ["one", "two", "one", "two", "one","two"],'Z1': ["dull", "shiny", "shiny", "dull", "shiny","shiny"],'Z2': ["hello","hello","hello","hello","mince","mince"]})
-    
-    learner=gum.BNLearner("df_test.csv")
-    #avec py agrum
-    print(indepandance(df_test,"X","Y",["Z1","Z2"],learner=learner,usePyAgrum=True).realize_test())
-    #avec R
-    print(indepandance(df_test,"X","Y",["Z1","Z2"],R_test=True).realize_test())
-    #avec own program
-    print(indepandance(df_test,"X","Y",["Z1","Z2"]).realize_test())
-    """
-    sizes=[20000,50000,100000]
-    p_value1=[0.2,0.5,0.4]
-    p_value2=[0.1,0.2,0.9]
-    len_plot=4
-    fig,ax = plt.subplots(nrows=len_plot, ncols=1, sharex=True,figsize =[6.4, 1.5*len_plot],dpi=100)
-    for index in range(len_plot):
-        ax[index].plot(sizes, p_value1, label="test {} ".format(index))
-        ax[index].axhline(0.5,linewidth=0.5)
-        ax[index].set_ylabel ("pValue")
-        ax[index].set_title("test {} ".format(index))
-    fig.tight_layout()
-    plt.savefig("resultat_independance_R.png")
   
   
    
     
     
     
+
     
     
+  
+
+
     
-    
-    
-   
 
     
     

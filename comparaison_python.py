@@ -15,103 +15,276 @@ from h2pc import H2PC
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import load_objects,save_objects
+import pyAgrum.lib.ipython as gnb
+from pyAgrum.lib.bn2scores import computeScores
+import pickle
+from independances import indepandance
+from collections import OrderedDict
 
-def compute_average_distance(number_repetitions,temp_database,size,distance_to_compute,true_bn):
-    temp_scoring_matrix=np.empty((3,number_repetitions))
-    print("we compute scoring for size ",size,"\n\n")
-    for repetition in range(number_repetitions):    
-        oslike.head(source_database,size,temp_database)
-        
-        #to get the size of each file computed
-        #oslike.wc_l(os.path.join("out","extract_asia.csv"))
-        learner=gum.BNLearner(temp_database) 
-        
-        #learn with greedy hill climbing
-        learner.useGreedyHillClimbing()
-        bn_greedy=learner.learnBN()
-        temp_scoring_matrix[0,repetition]=comp.GraphicalBNComparator(bn_greedy,true_bn).scores()[distance_to_compute]
-        
-        #learn with tabu search
-        learner.useLocalSearchWithTabuList()
-        bn_tabu=learner.learnBN()
-        temp_scoring_matrix[1,repetition]=comp.GraphicalBNComparator(bn_tabu,true_bn).scores()[distance_to_compute]
-        
-        #learn with H2PC
-        bn_H2PC=H2PC(learner,score_algorithm="Greedy_climbing").learnBN()
-        oslike.rm(temp_database)
-        temp_scoring_matrix[2,repetition]=comp.GraphicalBNComparator(bn_H2PC,true_bn).scores()[distance_to_compute]
-        
-    print("valeur moyenne for size {} is {}".format(size,list(np.mean(temp_scoring_matrix,axis=1))))
-    return list(np.mean(temp_scoring_matrix,axis=1))
-    
+from matplotlib.lines import Line2D
+
+
 
 def choose_graph_name(name_graphes):
-    graph=input("choose one of the following graphs {} :\n".format(name_graphes))
-    graph=re.sub(r'\W+', '', graph).lower()
-    if graph in name_graphes:
-        return graph
+    dico_name_graphes_formatted={os.path.splitext(graph)[0]:graph for graph in name_graphes}    
+    graph=input("choose one of the following graphs {} :\n".format(list(dico_name_graphes_formatted.keys())))
+        
+    if graph in list(dico_name_graphes_formatted.keys()):
+        return dico_name_graphes_formatted[graph]
     else:
+        print("Inserted name does not belong to those written")
         choose_graph_name(name_graphes)
+        
+        
+        
 
-def generate_databases(structure_to_learn):
-    #create for each size 30 databases and then store the results in a pandas database
-    true_bn=gum.loadBN(os.path.join("true_graphes_structures",structure_to_learn+".bif"))
+
+def compute_average_distance(bn, nsamples,size,algorithm,score_measured):
+    #matrix of shape (repetitions * scores) to get the mean of each type of score
+    #algorithm:(type,agrs,kwargs)
+    type_algorithm,args,kwargs=algorithm[0],algorithm[1][0],algorithm[1][1]    
+    scoring_matrix=np.empty(shape=(len(score_measured),nsamples))
     
-    source_database=os.path.join("databases", "sample_"+structure_to_learn+"_"+str(time.strftime("%A_%d_%B_%Y"))+ ".csv")
-    print("name CSV file is ",source_database)
-    gum.generateCSV(true_bn,source_database,500000)
-    return source_database
+    for repetition in range(nsamples):    
+        #generate a database of the required size
+        gum.generateCSV(bn,os.path.join("databases","temp_base.csv"),size,False,with_labels=True)  
+        learner=gum.BNLearner(os.path.join("databases","temp_base.csv")) 
+        dico_algorithm={'greedy_climbing':learner.useGreedyHillClimbing,'tabu_search':learner.useLocalSearchWithTabuList, 'miic':learner.useMIIC, '3off2':learner.use3off2}
+        
+               
+        #with algos coming from pyagrum
+        if type_algorithm in dico_algorithm.keys():
+            detect_cycle,iteration=True,0
+            #we add that part to avoid cycle erros by repeating the process
+            while (detect_cycle and iteration<100):                
+                start_time=time.time()
+                iteration+=1    
+                try:
+                    learner.useMIIC()
+                    created_bn=learner.learnBN()
+                except gum.InvalidDirectedCycle:                    
+                    gum.generateCSV(bn,os.path.join("databases","temp_base.csv"),size,False,with_labels=True) 
+                    learner=gum.BNLearner(os.path.join("databases","temp_base.csv")) 
+                    dico_algorithm[type_algorithm](*args,**kwargs)
+                else:
+                    detect_cycle=False
+                    end_time=time.time()-start_time 
+            if iteration>=100:
+                raise AssertionError("failure of miic to compute the bayesian network")
+                    
+        #for the moment, only possible case is H2PC case, these lines won't be required after
+        else:
+            df=pd.read_csv(os.path.join("databases","temp_base.csv"))
+            start_time=time.time()
+            created_bn=H2PC(learner,df,*args,**kwargs).learnBN()
+            end_time=time.time()-start_time
             
-def learn_scores(structure_to_learn,source_database,distance_to_compute='dist2opt'):    
-    true_bn=gum.loadBN(os.path.join("true_graphes_structures",structure_to_learn+".bif"))
-    scoring_values={algo:[] for algo in ['greedy_climbing','tabu_search','H2PC']}
-     
-    possible_scoring_distances=['recall','precision','fscore','dist2opt']
-    if distance_to_compute not in possible_scoring_distances:
-        raise AssertionError("distance score still not implemented, list of of possible computations is {}".format(possible_scoring_distances))
+        #store results from the scores pyagrum tools in scoring_matrix
         
-    for size in sample_size:
-        temp_database=os.path.join("databases","extract_"+structure_to_learn+".csv")
-        score_by_algorithm=compute_average_distance(30,temp_database,size,distance_to_compute,true_bn)        
-        scoring_values['greedy_climbing'].append(score_by_algorithm[0])
-        scoring_values['tabu_search'].append(score_by_algorithm[1])
-        scoring_values['H2PC'].append(score_by_algorithm[2])
-     #store results in a pandas object
-    print("les valeurs de score sont les suivantes ",scoring_values)
-    scoring_values_df=pd.DataFrame.from_dict(scoring_values)   
-    return scoring_values_df
+        scores_list=comp.GraphicalBNComparator(bn,created_bn).scores()
+        scores_list.update(computeScores(created_bn,os.path.join("databases","temp_base.csv")))
+        scores_list.update({'time':end_time,'number_tests':indepandance.number_tests,'specificity':scores_list['count']['tn']/(scores_list['count']['tn'] +scores_list['count']['fp'])})
+        #gather all scores in a single list
         
-def plot_vizualisation(dataframe,sample_size,distance_to_compute):   
-    fig, ax = plt.subplots(1, 1)
-    pd.plotting.table(ax, np.round(score_results.iloc[:, [0,1,2]], 2),loc='lower right',colWidths=[0.15, 0.15, 0.15])
-    dataframe.plot(ax=ax,x='sample_size', y=dataframe.columns.values[0:-1],style=['-', '--', '-.'],title="{} according to the size of databases".format(distance_to_compute))
-       
+        #store results of each score, conserving the order of the given list
+        ordered_score = OrderedDict((score, scores_list[score]) for score in score_measured)
+        scoring_matrix[:,repetition]=list(ordered_score.values())
+        
+    return scoring_matrix
     
+        
+        
+        
+def learn_scores(bn,sample_size,score_measured=['dist2opt'],algorithms={'tabu_search':([],{})},nsamples=30):    
+    possible_scoring_distances=['recall','precision','fscore','dist2opt','bic','aic','mdl','time','number_tests','specificity']
+    for score in score_measured:
+        if score not in possible_scoring_distances:
+            raise AssertionError("distance score still not implemented, list of of possible computations is {}".format(possible_scoring_distances))
+    #assert that if there's number_tests, there's only h2pc algo used
+    if ('number_tests' in score_measured) and "".join(list(algorithms.keys()))!='h2pc':
+        raise AssertionError ("we can only compute number of tests for h2pc")
+    possible_algorithms=['greedy_climbing','tabu_search', 'H2PC', 'miic', '3off2']
+    for algo in algorithms: 
+        if algo not in possible_algorithms:
+            raise AssertionError("algorithm score still not implemented, list of of possible computations is {}".format(list(possible_algorithms.keys())))
+    
+    #matrix scoring all scores measured for each database
+    matrix_scores=np.empty(shape=(len(sample_size),len(algorithms),len(score_measured),nsamples))
+    for row_index, size in enumerate (sample_size):
+        for column_index, algorithm in enumerate(algorithms.items()):
+            print("nous en sommes a l'algo ", algorithm, "pour al taille suivante de database ", size)
+            matrix_scores[row_index,column_index,Ellipsis]=compute_average_distance(bn, nsamples,size,algorithm,score_measured)
+    return matrix_scores
+
+   
+
+
+def plot_score_algorithms(bn_name,sample_size,score_measured=['dist2opt'],algorithms={'tabu_search':([],{})},nsamples=10,with_boxplot=False):  
+    """
+    Subplot score algorithms from a matrix score ( size*algo*scores).
+    """
+   
+    bn=gum.loadBN(os.path.join("true_graphes_structures",bn_name))
+    matrix_score=learn_scores(bn,sample_size,score_measured,algorithms,nsamples)
+    
+    
+    save_objects(os.path.join('scores','matrice_scores_{}'.format(os.path.splitext(bn_name)[0])),matrix_score)
+   
+    
+    #matrix_score=load_objects(os.path.join('scores','matrice_scores_alarm.bif'))
+    
+    fig,ax = plt.subplots(nrows=len(score_measured), ncols=1, sharex=True,figsize =[6.4, 2*len(score_measured)])
+    #define set of colors
+    cmap = plt.get_cmap('gnuplot')
+    colors = [cmap(i) for i in np.linspace(0.1, 1, len(score_measured))]
+    mean_colors=colors[::-1]    
+    for index_score, score in enumerate(score_measured):
+        for index_algo,mixed in enumerate(zip(colors,algorithms)):            
+            score_repetition=matrix_score[:,index_algo,index_score]
+            mean_resampling=np.mean(score_repetition,axis=1)
+            if with_boxplot:
+                meanpointprops = dict(marker='D', markeredgecolor='white',markerfacecolor=mean_colors[index_score])
+                bp=ax[index_score].boxplot(np.transpose(score_repetition),notch=True, sym=' ',patch_artist=True,showmeans=True,meanprops=meanpointprops)                
+                for box in bp['boxes']:
+                    # change fill color
+                    box.set( facecolor = colors[index_score] )
+            else:
+                ax[index_score].plot(sample_size,mean_resampling, label=mixed[1],color=mixed[0],marker='+')
+        ax[index_score].set_ylabel (score)
+        ax[index_score].set_title("Score measure {} in relation with dataset size".format(score))
+        #at the end of computation, delete temporay file created
+        
+    if os.path.exists(os.path.join("databases","temp_base.csv")):
+        os.remove(os.path.join("databases","temp_base.csv"))  
+    plt.tick_params(axis='x',rotation=45)
+    plt.xlabel ("data size") 
+    box = ax[len(score_measured)-1].get_position()
+    ax[len(score_measured)-1].set_position([box.x0, box.y0 + box.height * 0.4,
+                     box.width, box.height * 0.6])    
+    ax[len(score_measured)-1].legend(bbox_to_anchor=(0.0, -1,1., .102), loc=3,ncol=4, mode="expand", fancybox=True, shadow=True)    
+    fig.suptitle('Some score measures for BN : {}'.format(os.path.splitext(bn_name)[0]),y=1.05,weight ="bold")
+    fig.tight_layout()
+    return fig
+    
+    
+    
+
+
+
+
+
+def compute_ratio(bn, nsamples,size,algorithms,score_measured):    
+    matrix_ratio_list=[compute_average_distance(bn, nsamples,size,algo,score_measured) for algo in algorithms.items()]      
+    #we add a really small value to avoid divisions by 0
+    matrix_ratio=matrix_ratio_list[1]/(matrix_ratio_list[0]+10**-10)
+    return matrix_ratio
+ 
+    
+def learn_ratio(bn,sample_size,score_measured=['dist2opt'],algorithms={'tabu_search':([20,50],{}),'greedy_climbing':([],{})},nsamples=30):    
+    possible_ratio_distances=['recall','precision','fscore','dist2opt','bic','aic','mdl','time','number_tests','specificity']
+    for score in score_measured:
+        if score not in possible_ratio_distances:
+            raise AssertionError("distance score still not implemented, list of of possible computations is {}".format(possible_ratio_distances))
+      
+    if len (algorithms)!=2:
+        raise AssertionError("ratio is supposed to be between 2 distances only")
+    possible_algorithms=['greedy_climbing','tabu_search', 'H2PC', 'miic', '3off2']
+    for algo in algorithms: 
+        if algo not in possible_algorithms:
+            raise AssertionError("algorithm score still not implemented, list of of possible computations is {}".format(list(possible_algorithms.keys())))
+    
+    #matrix scoring all scores measured for each database
+    matrix_scores=np.empty(shape=(len(sample_size),len(score_measured),nsamples))
+    for index_size, size in enumerate (sample_size):
+        print("nous en sommes a la taille ",size)
+        matrix_scores[index_size,Ellipsis]=compute_ratio(bn, nsamples,size,algorithms,score_measured)
+    return matrix_scores
+
+def plot_ratio_algorithms(bn_name,sample_size,score_measured=['dist2opt'],algorithms={'tabu_search':([],{})},nsamples=30):  
+    """
+    Subplot score algorithms from a matrix score ( size*algo*scores).    """   
+    print("nom bn est ", bn_name)
+    bn=gum.loadBN(os.path.join("true_graphes_structures",bn_name))
+    matrix_ratio=learn_ratio(bn,sample_size,score_measured,algorithms,nsamples)
+    
+    """
+    save_objects('matrice_scores',matrix_score)
+    matrix_score=load_objects('matrice_scores')
+    """
+     
+    fig,ax = plt.subplots(nrows=len(score_measured), ncols=1, sharex=True,figsize =[6.4, 2*len(score_measured)])
+    #define set of colors
+    cmap = plt.get_cmap('gnuplot')
+    colors = [cmap(i) for i in np.linspace(0.1, 1, len(score_measured))]
+    mean_colors=colors[::-1]
+    for index_score, score in enumerate(score_measured):
+        score_repetition=matrix_ratio[:,index_score,:]
+        meanpointprops = dict(marker='D', markeredgecolor='white',markerfacecolor=mean_colors[index_score])
+        bp=ax[index_score].boxplot(np.transpose(score_repetition),notch=True, sym=' ',patch_artist=True,showmeans=True,meanprops=meanpointprops)
+        for box in bp['boxes']:
+            box.set( facecolor = colors[index_score] )        
+        ax[index_score].set_ylabel (score)
+        ax[index_score].set_title("Score ratio measure {} in relation with dataset size".format(score))
+        ax[index_score].yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
+               alpha=0.5)
+        
+        
+        
+    ax[len(score_measured)-1].set_xticklabels(sample_size,rotation=45, fontsize=8)
+        
+    #at the end of computation, delete temporay file created    
+    if os.path.exists(os.path.join("databases","temp_base.csv")):
+        os.remove(os.path.join("databases","temp_base.csv"))  
+    
+    box = ax[len(score_measured)-1].get_position()
+    ax[len(score_measured)-1].set_position([box.x0, box.y0 + box.height * 0.4,
+                     box.width, box.height * 0.6])   
+    
+    legend_elements=[Line2D([0], [0], marker='D', markeredgecolor='white',markerfacecolor=mean_colors[index_score],color="w",label="mean ratio for score: {}".format(score_measured[index_score])) for index_score in range (len(score_measured))]    
+    
+    ax[len(score_measured)-1].legend(handles=legend_elements,bbox_to_anchor=(0.0, -1,1., .102), loc=3,ncol=4, mode="expand", fancybox=True, shadow=True)    
+    plt.xlabel("data_size")
+    fig.suptitle('Ratio of scores of {} over {} for BN : {}'.format(list(algorithms.keys())[1],list(algorithms.keys())[0],os.path.splitext(bn_name)[0]),y=1.05,weight ="bold")
+    fig.tight_layout()
+    return fig
+
+
   
         
         
-
-#several sample sizes to look after
-sample_size=[500,1000,2000,5000,20000]
-#storing of true graph structures
-name_graph_files=os.listdir("true_graphes_structures")
-name_graphes=[os.path.splitext(graph)[0] for graph in name_graph_files]
-structure_to_learn=choose_graph_name(name_graphes)
-
-distance_to_compute='dist2opt'
-
-#generate corresponding databases
-source_database=generate_databases(structure_to_learn)
-score_results=learn_scores(structure_to_learn,source_database,distance_to_compute)
-score_results = score_results.assign(sample_size=pd.Series(sample_size).values) 
-
-plot_vizualisation(score_results,sample_size,distance_to_compute)
-
-
-
+if __name__ == "__main__":
+    #several sample sizes to look after
+    sample_size=[200,500,1000]
+    #storing of true graph structures
+    name_graph_files=os.listdir("true_graphes_structures")
+    
+    bn=choose_graph_name(name_graph_files)
+    #print("le vrai bn est ",bn)
+    
+    
+    
+    #fig=plot_score_algorithms(bn,sample_size,['recall','fscore','dist2opt','specificity'],algorithms={'miic':([],{}),'H2PC':([],{'optimized':False,'filtering':"AND",'usePyAgrum':True})},nsamples=30)
+    #plt.savefig(os.path.join("figures","asia_scores"))
+    
+    #fig=plot_ratio_algorithms(bn,sample_size,score_measured=['dist2opt','recall'],algorithms={'tabu_search':([20,50],{}),'H2PC':([],{'optimized':False,'filtering':"AND",'usePyAgrum':True})},nsamples=10)
+    #plt.savefig(os.path.join("figures","asia_ratios"))
+    
+   
+    
+    
 
 
     
+                   
+    
+    
+
+
+
+
+
+
 
 
 

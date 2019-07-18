@@ -14,6 +14,7 @@ import os
 import pyAgrum.lib.ipython as gnb
 
 from independances import indepandance
+import time
 
 
 class hpc():
@@ -22,7 +23,7 @@ class hpc():
     that's to say the set of spouses, children and parents around it. 
     
     """
-    def __init__(self,target,df,threshold_pvalue=0.05,verbosity=False,whitelisted=set(),blacklisted=set(),known_good=set(),known_bad=set(),**independance_args):
+    def __init__(self,target,df,threshold_pvalue=0.05,reset_compteur=False,verbosity=False,whitelisted=set(),blacklisted=set(),known_good=set(),known_bad=set(),**independance_args):
         
         #controle empty values and nature of dataframe
         if not isinstance(df,pd.core.frame.DataFrame):
@@ -72,9 +73,12 @@ class hpc():
         self.known_bad=known_bad
         self.independance_args=independance_args
         #add verbosity and threshold value
+        
         self.independance_args['threshold_pvalue']=self.threshold_pvalue
-        self.independance_args['verbosity']=self.threshold_pvalue
+        self.independance_args['verbosity']=self.verbosity
         self.independance_args['levels']=independance_args.get('levels',self.df.nunique())
+        
+        
     
     def _is_node_linked(self,arc):        
         if (arc[0]==self.target):            
@@ -88,8 +92,11 @@ class hpc():
          #dictionnary here is used to store clearly both neighbours and balnket markov, 
          #according to the volunty's user
          markov_dictionnary={"neighbours":set()}
-               
+         #1. [DE_PCS] Search parents and children superset
          PCS,d_separation,p_values=self._DE_PCS()
+         
+         if self.verbosity:
+             print("Superset of parents is {} \n\n".format(PCS))
          
           #optimisation : 0 or 1 node in PCS --> PC == PCS
          if(len(PCS) < 2):
@@ -99,7 +106,8 @@ class hpc():
           
    
          SPS=self._DE_SPS(PCS,d_separation)
-       
+         if self.verbosity:
+             print("Superset of spouses is {} \n\n".format(SPS))
        
          super_voisinage=PCS.union(SPS).copy() 
           #optimisation : 2 nodes in PC and no SP --> PC == PCS
@@ -111,7 +119,8 @@ class hpc():
           # 3. [PC] Get the Parents and Children from nodes within PCS and RSPS
          
          PC=self._FDR_IAPC(super_voisinage,self.target)
-     
+         if self.verbosity:
+             print("reduced set with algorithm FDR is {} \n\n".format(PC))
        
        
           # 4. [Neighbourhood OR] Detect and add false-negatives to PC, by checking if
@@ -122,9 +131,11 @@ class hpc():
              #determine set of potential candidates
              voisinage_par_child=super_voisinage.union({self.target}).difference({par_child})              
              if self.target in self._FDR_IAPC(voisinage_par_child,par_child):
+                 if self.verbosity:
+                     print("we add {} as its blanket markov is : {} \n\n".format(par_child,self._FDR_IAPC(voisinage_par_child,par_child)))
                  PC=PC.union({par_child})    
                  
-         markov_dictionnary["neighbours"],markov_dictionnary["spouses"]=PC,SPS  
+         markov_dictionnary["neighbours"],markov_dictionnary["spouses"]=PC,SPS           
          return(PC)    
        
          
@@ -149,7 +160,7 @@ class hpc():
         
         # Phase (I): remove X if Ind(Target,variable) (0-degree d-separated nodes)
         for variable in nodes_to_check:              
-            stat,pvalue=indepandance(self.df,self.target,variable,[],independance_args=self.independance_args).realize_test()[0:2]
+            stat,pvalue=indepandance(self.df,self.target,variable,[],**self.independance_args).realize_test()[0:2]
           
             if self.verbosity:
                 self.testIndepFromChi2(self.target,variable,self._isIndep(pvalue))
@@ -159,8 +170,8 @@ class hpc():
                 d_separation[variable]=set()
                 
                 if self.verbosity:
-                    #self.testIndepFromChi2(self.target,variable,self._isIndep(pvalue))
-                    print("node '{}' is removed of the markov blanket".format(variable))
+                    self.testIndepFromChi2(self.target,variable,self._isIndep(pvalue))
+                    print("node '{}' is removed of the parent superset".format(variable))
                
             else:
                 dict_p_values[variable]=pvalue
@@ -200,19 +211,15 @@ class hpc():
             
          
             for condition in ordered_dictionnary.keys():  
-                stat,pvalue=indepandance(self.df,self.target,variable,[condition],independance_args=self.independance_args).realize_test()[0:2]
+                stat,pvalue=indepandance(self.df,self.target,variable,[condition],**self.independance_args).realize_test()[0:2]
                 
-             
-                if self.verbosity:
-                    self.testIndepFromChi2(self.target,variable,self._isIndep(pvalue),[condition])
-                
-               
                 if self._isIndep(pvalue):
                     #if conditionnaly independant, we remove the node from the blanket markov
                     #secondly, we update the pvalues database (remvoing the one corresponding to the deleted node)
                  
                     if self.verbosity:
-                        print("node '{}' is removed from the MB, as conditionnaly independant by '{}' ".format(variable,condition))
+                        self.testIndepFromChi2(self.target,variable,self._isIndep(pvalue),[condition])
+                        print("node '{}' is removed from the parent superset, as conditionnaly independant by '{}' ".format(variable,condition))
                
                     parent_set.remove(variable)  
                     
@@ -222,10 +229,6 @@ class hpc():
                 else:
                     if pvalue>dict_p_values[variable]:
                         dict_p_values[variable]=pvalue
-                    
-        if self.verbosity:
-            print("superset of parents is '{}' ".format(parent_set))
-        
         return parent_set,d_separation,dict_p_values
         
     
@@ -251,19 +254,17 @@ class hpc():
                 condition=list({variable}.union(d_separation[variable_extern]))
                
                             
-                stat,pvalue=indepandance(self.df,self.target,variable_extern,condition,independance_args=self.independance_args).realize_test()[0:2]
+                stat,pvalue=indepandance(self.df,self.target,variable_extern,condition,**self.independance_args).realize_test()[0:2]
                 
-                if self.verbosity:
-                    self.testIndepFromChi2(self.target,variable_extern,self._isIndep(pvalue),condition)
+                
                 if not self._isIndep(pvalue):
                     spouses_x=spouses_x.union({variable_extern})
                     pval_x[variable_extern]=pvalue
                     if self.verbosity:
+                        self.testIndepFromChi2(self.target,variable_extern,self._isIndep(pvalue),condition)
                         print("node '{}' is added to the set of spouses by '{}' ".format(variable_extern,variable))
                
-                
-                
-            # # heuristic : sort the candidates in decreasing p-value order
+            # heuristic : sort the candidates in decreasing p-value order
             # this way we are more prone to remove less correlated nodes first
            
             ordered_pvalx=OrderedDict(sorted(pval_x.items(), key=lambda x: x[1],reverse=True))
@@ -276,13 +277,11 @@ class hpc():
                 del(temp_ordered_pvalx[spouse])
                 for spouse_intern in temp_ordered_pvalx:                       
                     condition=list({variable}.union({spouse_intern}))
-                    stat,pvalue=indepandance(self.df,self.target,spouse,condition,independance_args=self.independance_args).realize_test()[0:2]
-                    
-                    if self.verbosity:
-                        self.testIndepFromChi2(self.target,spouse,self._isIndep(pvalue),condition)
+                    stat,pvalue=indepandance(self.df,self.target,spouse,condition,**self.independance_args).realize_test()[0:2]
                     
                     if self._isIndep(pvalue):
                         if self.verbosity:
+                            self.testIndepFromChi2(self.target,spouse,self._isIndep(pvalue),condition)
                             print("node '{}' is removed from the set of spouses by '{}' ".format(spouse,spouse_intern))
                         spouses_x=spouses_x.difference({spouse})
                         break            
@@ -292,7 +291,7 @@ class hpc():
    
         return(spouses_set)
     
-    def testIndepFromChi2(var1,var2,result_test,condition=[]):        
+    def testIndepFromChi2(self,var1,var2,result_test,condition=[]):        
         """
         Just prints the resultat of independance test
         """
@@ -341,7 +340,7 @@ class hpc():
             #1) p-value calculation
             for neighbour in voisinage:
                 condition=MB_cible.difference({neighbour})
-                stat,p_value=indepandance(self.df,target,neighbour,list(condition),independance_args=self.independance_args).realize_test()[0:2]
+                stat,p_value=indepandance(self.df,target,neighbour,list(condition),**self.independance_args).realize_test()[0:2]
                
                 dico_p_value[neighbour]=p_value
                 #sort dictionnary by increasing p_value           
@@ -368,9 +367,8 @@ class hpc():
                         previous_exclusion=True
                         markov_change=True                     
                       
-                        if self.verbosity:
+                        if self.verbosity:                            
                             print("current excluded node is '{}' ".format(current_excluded_node))
-                 
                         break
                         
             #3) neighbour inclusion
@@ -392,7 +390,6 @@ class hpc():
                      
                             if self.verbosity:
                                 print("current included node is '{}' ".format(current_included_node))
-                     
                             break
                             
                 
@@ -421,9 +418,6 @@ class hpc():
             #end of a complete inclusion or exclusion of a node, we compute then another set of blankets
             #we re-initialise all the values
             number_iterations+=1
-        if self.verbosity:
-            print("blanket markov got after iambfdr is {}".format(MB_cible))
-        
         return MB_cible
         
                 
@@ -439,7 +433,7 @@ class hpc():
         #sort by decreasing set length to potentially stop quicklier?
         condition_set=self._powerset(d_separation_set.difference({node_to_check}))
         for condition in condition_set:
-            stat,p_value=indepandance(self.df,target,node_to_check,condition,independance_args=self.independance_args).realize_test()[0:2]               
+            stat,p_value=indepandance(self.df,target,node_to_check,condition,**self.independance_args).realize_test()[0:2]               
             if p_value>=self.threshold_pvalue:  
                 if self.verbosity:
                     print(" node", node_to_check, "is not anymore a neighbour of", target, " based on condition ",condition) 
@@ -482,51 +476,19 @@ class hpc():
 
 
 
-if __name__ == "__main__":  
-    import pyAgrum.lib.bn_vs_bn as comp
+if __name__ == "__main__": 
+    
     asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif")) 
-    df=pd.read_csv("sample_asia.csv")
-    #gnb.showBN(asia_bn)
+    df=pd.read_csv(os.path.join("databases","sample_asia.csv"))
+    learner=gum.BNLearner(os.path.join("databases","sample_asia.csv"))
     
     
-    #print(hpc('either',df,threshold_pvalue=0.05,R_test=True).couverture_markov())
-    """
-    true_arcs=asia_bn.arcs()
     
-    learner_greedy=gum.BNLearner("sample_asia.csv")
-    learner_greedy.useGreedyHillClimbing()
-    BNgreedy=learner_greedy.learnBN()
-    gnb.showBN(BNgreedy)
-    
-    for x in asia_bn.nodes():
-        print(asia_bn.variable(x))
-        
-        
-    learner_H2PC=gum.BNLearner("sample_asia.csv",asia_bn)
-    for arc in true_arcs:
-        learner_H2PC.addPossibleEdge(*arc)
-    learner_H2PC.useLocalSearchWithTabuList(100,20)
-    BN_H2PC=learner_H2PC.learnBN()
-    gnb.showBN(BN_H2PC)
-    #hpc('VENTALV',learner,verbosity=False).couverture_markov()
-    
-    print(comp.GraphicalBNComparator(BNgreedy,asia_bn).scores())
-    print(comp.GraphicalBNComparator(BN_H2PC,asia_bn).scores())
-    
-    print(hpc("asia",df,R_test=True).couverture_markov())
-    """
-    
-    alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
-    #gnb.showBN(alarm_bn,"8")
-    #gum.generateCSV(alarm_bn,"sample_alarm.csv",20000,with_labels=True)
-    df=pd.read_csv("sample_alarm.csv")
-    print(hpc("BP",df,R_test=True,debug=True).couverture_markov())
-
-    
-
-
-    
-   
+    indepandance.number_tests=0
+    hpc('xray',df,verbosity=False).couverture_markov()
+    print("le nombre de tests est de ", indepandance.number_tests)
+    indepandance.number_tests=0
+    print("number of test is ", indepandance.number_tests)
     
     
 
