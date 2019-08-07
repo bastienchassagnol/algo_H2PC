@@ -18,6 +18,8 @@ from pyAgrum.lib.bn2scores import computeScores
 from independances import indepandance
 
 
+
+
 class H2PC ():
     """H2PC is a new hybrid algorithm combining scoring and constraint-structured learning,
     which can be considered as an improvement of MMHC in many regards. Especially, it clearly enables
@@ -197,7 +199,7 @@ class H2PC ():
         for target in self.variables:  
             
             dico_couverture_markov[target]=hpc(target,self.df,self.threshold_pvalue,self.verbosity,whitelisted=self.whitelisted,blacklisted=self.blacklisted,**self.independance_args).couverture_markov()           
-            
+            print("We compute with HPC the neighbours of '{}' : '{}' \n\n".format(target,dico_couverture_markov[target]))
             if self.verbosity:
                 print("We compute with HPC the neighbours of '{}' : '{}' \n\n".format(target,dico_couverture_markov[target]))
         return dico_couverture_markov
@@ -283,8 +285,7 @@ if __name__ == "__main__":
     
    
     
-    
-    """
+  
     alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
     #gnb.showBN(alarm_bn,"6")    
     df=pd.read_csv("sample_alarm.csv")
@@ -305,11 +306,36 @@ if __name__ == "__main__":
     
     print("comparaisosn entre miic et h2pc ", comp.GraphicalBNComparator(bn_miic,alarm_bn).scores())
     print("comparaisosn entre normal et h2pc ", comp.GraphicalBNComparator(bn_H2PC_alarm,alarm_bn).scores())
+   
+
+    """
+    bn1=gum.fastBN("A->B;A->C")
+    bn2=gum.fastBN("B->A;C->A")
+    
     
 
+    bn3=gum.fastBN("A->B;A->C;C->D")
+    bn4=gum.fastBN("B->A;C->A;D->C")
+    
+    gnb.showBN(bn1)
+    gnb.showBN(bn2)
+    
+    cmp=comp.GraphicalBNComparator(bn1,bn2)
+    print(cmp.scores())
     
     
+    """
+    alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
+    #gum.generateCSV(alarm_bn,"small_alarm.csv",2000,False,True)
     
+    learner=gum.BNLearner("small_alarm.csv")
+    df=pd.read_csv("small_alarm.csv")
+    bn_H2PC_alarm=H2PC(learner,df,score_algorithm="tabu_search",optimized=False,filtering="AND",R_test=True).learnBN()    
+    gnb.showBN(bn_H2PC_alarm)
+    """
+    
+    
+ 
     
 
 

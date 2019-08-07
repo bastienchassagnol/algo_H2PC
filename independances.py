@@ -284,8 +284,10 @@ class indepandance ():
     
     
     def realize_test(self): 
+        """
         if self.verbosity:
            print("Statistic test carried out is {} with degrees adjustement {} and following threshold value {}".format(self.calculation_method, self.dof_adjustment, self.threshold_pvalue))
+        """
         if self.usePyAgrum: 
             type_test={"pearson":self.learner.chi2,"log-likelihood":self.learner.G2}           
             retour=type_test[self.calculation_method](self.ind_x,self.ind_y,self.ind_z)
@@ -302,9 +304,10 @@ class indepandance ():
             
             
             retour=self.realize_R_test(dico_conversion_type[python_test])
+            """
             if self.verbosity:
                 print("Computed values are, in that order, stat computed: {}, and pvalue: {}.".format(*retour))              
-            
+            """
         else:
             
             type_test={ "classic":self.classic_test,"adjusted":self.adjusted_test,"permut":self.permutation,"permut_adjusted":self.heuristic_permutation,"sp":self.semi_parametric}

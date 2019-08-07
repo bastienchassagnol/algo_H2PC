@@ -129,7 +129,10 @@ class hpc():
          
          for par_child in PCS.difference(PC):
              #determine set of potential candidates
-             voisinage_par_child=super_voisinage.union({self.target}).difference({par_child})              
+             if self.verbosity:
+                 print("we study outsider ",par_child,"\n\n")
+             voisinage_par_child=super_voisinage.union({self.target}).difference({par_child}) 
+             
              if self.target in self._FDR_IAPC(voisinage_par_child,par_child):
                  if self.verbosity:
                      print("we add {} as its blanket markov is : {} \n\n".format(par_child,self._FDR_IAPC(voisinage_par_child,par_child)))
@@ -286,8 +289,7 @@ class hpc():
                         spouses_x=spouses_x.difference({spouse})
                         break            
             spouses_set=spouses_set.union(spouses_x)  
-            if self.verbosity:
-                print("set of spouses is ", spouses_set)
+            
    
         return(spouses_set)
     
@@ -303,11 +305,10 @@ class hpc():
     def _IAMBFDR(self,target,voisinage):
         # whitelisted nodes are included by default (if there's a direct arc
         # between them of course they are in each other's markov blanket).
-        #start={'DISCONNECT', 'VENTLUNG', 'VENTMACH'}
-        
+        #start={'DISCONNECT', 'VENTLUNG', 'VENTMACH'}        
         start=[]
         # known good nodes are included by default         
-        MB_cible=self.whitelisted.union(self.known_good,start)
+        MB_cible=self.whitelisted.union(self.known_good,start).difference(target)
         
         #stock several neighbourhoods computed
         mb_storage=[]
@@ -322,7 +323,8 @@ class hpc():
         number_iterations=0
         
         #fdr rate
-        somme_indice=self._somme_indice(len(voisinage)) 
+        fdr_factor=self._fdr_factor(len(voisinage))+1
+        
         dico_p_value={}
         
         
@@ -336,7 +338,7 @@ class hpc():
             #check if markov found has been modified, if not, we stop looping
             markov_change=False
             
-           
+   
             #1) p-value calculation
             for neighbour in voisinage:
                 condition=MB_cible.difference({neighbour})
@@ -347,19 +349,39 @@ class hpc():
             dico_p_value=OrderedDict(sorted(dico_p_value.items(), key=lambda x: x[1]))
       
             if self.verbosity:
-                 print("P-values ordered are '{}' ".format(dico_p_value))
+                 print("\n P-values ordered are '{}' ".format(dico_p_value))
                  print("Current blanket markov is {} .".format(MB_cible))
       
                
             
-            #2) neighbour exclusion
+            #2) neighbour exclusion, we revert the order to exclude at first the most probable nodes to exclude
+            for index in range(len(dico_p_value.keys())-1,-1,-1):
+                #here we want to avoid the case where we exclude a node, that was included just before
+                #+whitelisted and known.good nodes cannot be removed
+                candidates_to_remove=MB_cible.difference({current_included_node}.union(self.known_good,self.whitelisted))
+                sorted_neighbour=list(dico_p_value.keys())[index]
+                if sorted_neighbour in candidates_to_remove:                    
+                    controle_pvalue=(dico_p_value[sorted_neighbour]*fdr_factor)/(index+1)
+                    
+                    if controle_pvalue>self.threshold_pvalue:
+                        current_excluded_node=sorted_neighbour
+                        current_included_node=None
+                        MB_cible=MB_cible.difference({sorted_neighbour})
+                        previous_exclusion=True
+                        markov_change=True                     
+                      
+                        if self.verbosity:                            
+                            print("current excluded node is '{}' ".format(current_excluded_node))
+                        break
+            
             for (index,sorted_neighbour) in enumerate(dico_p_value.keys()):
                 #here we want to avoid the case where we exclude a node, that was included just before
                 #+whitelisted and known.good nodes cannot be removed
                 candidates_to_remove=MB_cible.difference({current_included_node}.union(self.known_good,self.whitelisted))
                 if sorted_neighbour in candidates_to_remove:
                     
-                    controle_pvalue=(dico_p_value[sorted_neighbour]*somme_indice)/(index+1)
+                    controle_pvalue=(dico_p_value[sorted_neighbour]*fdr_factor)/(index+1)
+                    
                     if controle_pvalue>self.threshold_pvalue:
                         current_excluded_node=sorted_neighbour
                         current_included_node=None
@@ -379,8 +401,10 @@ class hpc():
                     
                     
                     possible_candidates_to_add=voisinage.difference(MB_cible.union(culprit,self.known_bad))                 
-                    if sorted_neighbour in possible_candidates_to_add:                
-                        controle_pvalue=dico_p_value[sorted_neighbour]*(len(sorted_neighbour)/(index+1))*somme_indice
+                    if sorted_neighbour in possible_candidates_to_add: 
+                        
+                        controle_pvalue=dico_p_value[sorted_neighbour]*fdr_factor/(index+1)
+                    
                         if controle_pvalue<=self.threshold_pvalue:
                             #print("on ajoute la variable ",sorted_neighbour)
                             markov_change=True
@@ -411,9 +435,6 @@ class hpc():
                     print("current repeated blanket alreay found is '{}' ".format(MB_cible))
             else:
              
-                if self.verbosity:
-                    print("current blanket found is '{}' ".format(MB_cible))
-             
                 mb_storage.append(MB_cible)
             #end of a complete inclusion or exclusion of a node, we compute then another set of blankets
             #we re-initialise all the values
@@ -422,7 +443,7 @@ class hpc():
         
                 
       
-    def _somme_indice(self,nb_variables):
+    def _fdr_factor(self,nb_variables):
         somme=Fraction()
         for indice in range (1,nb_variables):
             somme+=Fraction(1/indice)
@@ -455,7 +476,7 @@ class hpc():
         # children superset (PCS) and it's remaining spouses superset (RSPS).
         """
         #self.verbosity=True
-        
+       
         MB_cible=self._IAMBFDR(target,voisinage)
         MB_filtered=set(self._filter_hybrid(MB_cible,target))
                       
@@ -477,7 +498,7 @@ class hpc():
 
 
 if __name__ == "__main__": 
-    
+    """
     asia_bn=gum.loadBN(os.path.join("true_graphes_structures","asia.bif")) 
     df=pd.read_csv(os.path.join("databases","sample_asia.csv"))
     learner=gum.BNLearner(os.path.join("databases","sample_asia.csv"))
@@ -489,14 +510,17 @@ if __name__ == "__main__":
     print("le nombre de tests est de ", indepandance.number_tests)
     indepandance.number_tests=0
     print("number of test is ", indepandance.number_tests)
+    """
     
+    alarm_bn=gum.loadBN(os.path.join("true_graphes_structures","alarm.bif"))
+    #gum.generateCSV(alarm_bn,"small_alarm.csv",2000,False,True)
     
+    learner=gum.BNLearner("small_alarm.csv")
+    df=pd.read_csv("small_alarm.csv")
+    print("mb est ", hpc('STROKEVOLUME',df,verbosity=True,R_test=True).couverture_markov())
 
-    
-   
-  
-    
-    
+    gnb.showBN(alarm_bn,'10')
+
     
     
 
